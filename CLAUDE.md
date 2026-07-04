@@ -28,14 +28,6 @@ npm run test:watch     # Vitest watch mode
 npm run lint           # ESLint src/
 ```
 
-### Known Build Gotcha
-
-Project lives in `OneDrive - Pulsa` (path with spaces). This breaks:
-- `npm link` / `node-gyp` (can't build node-pty)
-- `electron-builder` winCodeSign (symlink errors)
-
-**Workaround**: Don't use `electron-builder` for the final package. Use ASAR-based manual packaging (see Release Process below).
-
 ### WSL Development
 
 #### node-pty rebuild
@@ -126,12 +118,6 @@ The `surfaceId` is passed to `pty.create()` so PTY ID = Surface ID (enables reli
 ### Split Tree
 Pane layouts use an immutable binary tree (`SplitNode`). Each leaf = one pane with N surfaces (tabs).
 Mutations go through `splitNode()`, `removeLeaf()`, `findLeaf()`, `getAllPaneIds()` in `split-utils.ts`.
-
----
-
-## Release Process
-
-See `/release` skill for the full step-by-step process (build → ASAR pack → staging → zip → tag → publish).
 
 ---
 
@@ -234,7 +220,7 @@ When compacting, always preserve: the full list of modified files, any verificat
 For any task that produces a deliverable (new feature, code modification, UI component, document, etc.):
 
 1. **Before starting**: Write a checklist of concrete, verifiable criteria in the conversation and wait for user approval. If the criteria are not clear from the request, ask the user to clarify them first — do not start work until criteria are confirmed.
-2. **After completing**: Use the `code-reviewer` subagent to review the diff against the criteria. Then go through each criterion and report pass ✅ or fail ❌. If any criterion fails, fix it before declaring the task done.
+2. **After completing**: If the task modified source code or config files (i.e. `git diff` is non-empty), use the `code-reviewer` subagent to review the diff against the criteria. Then go through each criterion and report pass ✅ or fail ❌. If any criterion fails, fix it before declaring the task done.
 
 Example format:
 ```
