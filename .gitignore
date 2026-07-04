@@ -12,3 +12,6 @@ release/
 
 # Local Claude Code settings
 .claude/settings.local.json
+
+# Personal task tracking
+task.md
