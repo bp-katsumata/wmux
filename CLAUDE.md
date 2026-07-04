@@ -32,6 +32,33 @@ Project lives in `OneDrive - Pulsa` (path with spaces). This breaks:
 
 **Workaround**: Don't use `electron-builder` for the final package. Use ASAR-based manual packaging (see Release Process below).
 
+### WSL Development
+
+#### node-pty rebuild
+Nix's npm (glibc 2.42) conflicts with Electron's Ubuntu glibc (2.39). Always rebuild node-pty with the system gcc:
+```bash
+rm -rf node_modules/node-pty/build
+CC=/usr/bin/gcc CXX=/usr/bin/g++ npx @electron/rebuild -f -w node-pty
+```
+
+#### Running Electron in WSL
+`npm run dev` crashes with SIGTRAP. Use instead:
+```bash
+npx concurrently "vite --port 5199" "wait-on http://localhost:5199 && electron . --no-sandbox --disable-gpu"
+```
+
+#### Testing as a separate Windows instance (without disrupting current session)
+Build and deploy to the dev folder in one command:
+```bash
+# WSL: build, pack ASAR, and deploy to wmux-dev in one step
+npm run deploy:dev
+```
+
+```powershell
+# Windows: launch as separate instance (won't affect current workspaces/sessions)
+$env:WMUX_INSTANCE="dev"; & "C:\Users\yuuki.katsumata\Downloads\wmux-dev\wmux.exe"
+```
+
 ---
 
 ## Architecture
@@ -451,6 +478,7 @@ Test files in `tests/unit/`: agent-manager, cdp-bridge, config-loader, notificat
 
 ## Conventions
 
+- **Context7 MCP**: Always use Context7 MCP (`mcp__plugin_context7_context7__resolve-library-id` + `mcp__plugin_context7_context7__query-docs`) when referencing library or API documentation, generating code that depends on a framework, or following setup/configuration instructions — do this automatically without being asked explicitly.
 - **Source transparency**: When answering investigations or questions, always list every file read and every web source consulted — never omit or abbreviate them.
 - **State**: Zustand slices in `src/renderer/store/`, composed in `index.ts`
 - **IPC**: Channels defined in `src/shared/types.ts`, never use magic strings
