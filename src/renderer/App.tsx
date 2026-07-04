@@ -36,6 +36,27 @@ function findLeafFromTree(node: SplitNode, paneId: PaneId): (SplitNode & { type:
   return findLeafFromTree(node.children[0], paneId) || findLeafFromTree(node.children[1], paneId);
 }
 
+/** Convert kebab-case TOML key to camelCase action name. */
+function tomlKeyToAction(key: string): string {
+  return key.replace(/-([a-z])/g, (_: string, c: string) => c.toUpperCase());
+}
+
+/** Apply `~/.wmux/config.toml`'s `[shortcuts]` section onto the shortcuts slice. */
+function applyUserConfigShortcuts(state: ReturnType<typeof useStore.getState>, shortcuts: any): void {
+  if (!shortcuts || typeof shortcuts !== 'object') return;
+  const validShortcuts: Record<string, any> = {};
+  const managed = new Set<any>();
+  for (const [tomlKey, binding] of Object.entries(shortcuts)) {
+    if (!binding || typeof binding !== 'object') continue;
+    const action = tomlKeyToAction(tomlKey);
+    validShortcuts[action] = binding;
+    managed.add(action);
+  }
+  if (Object.keys(validShortcuts).length > 0) {
+    state.setTomlShortcuts(validShortcuts as any, managed);
+  }
+}
+
 /** Apply `~/.wmux/config.toml`'s `[terminal]` section onto the terminal prefs slice. */
 function applyUserConfigTerminal(state: ReturnType<typeof useStore.getState>, terminal: any): void {
   if (!terminal) return;
@@ -395,6 +416,7 @@ export default function App() {
     const apply = (result: any) => {
       const state = useStore.getState();
       applyUserConfigTerminal(state, result?.terminal);
+      applyUserConfigShortcuts(state, result?.shortcuts);
 
       // App UI theme override (issue #67): `[appearance] ui-theme = "..."`.
       const uiTheme = result?.appearance?.uiTheme;

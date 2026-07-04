@@ -52,6 +52,7 @@ contextBridge.exposeInMainWorld('wmux', {
     getUserConfig: () => ipcRenderer.invoke(IPC_CHANNELS.CONFIG_GET_USER_CONFIG),
     reloadUserConfig: () => ipcRenderer.invoke(IPC_CHANNELS.CONFIG_RELOAD_USER_CONFIG),
     getUserConfigPath: () => ipcRenderer.invoke('config:getUserConfigPath'),
+    writeShortcuts: (shortcuts: Record<string, string>) => ipcRenderer.invoke(IPC_CHANNELS.CONFIG_WRITE_SHORTCUTS, shortcuts),
     onUserConfigUpdated: (callback: (cfg: any) => void) => {
       const handler = (_event: any, cfg: any) => callback(cfg);
       ipcRenderer.on(IPC_CHANNELS.CONFIG_USER_CONFIG_UPDATED, handler);

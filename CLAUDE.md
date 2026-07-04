@@ -1,10 +1,14 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 # wmux — Development Guide
 
 Electron-based Windows terminal multiplexer for AI agents. TypeScript, React 19, Zustand, xterm.js, node-pty.
 
 **Owner**: amirlehmam (GitHub) — speaks French, prefers fast pragmatic solutions, tests live.
 **Repo**: github.com/amirlehmam/wmux | **Site**: wmux.org (Netlify, static from `site/`)
-**Version**: 0.6.0
+**Version**: 0.15.0
 
 ---
 
@@ -61,15 +65,25 @@ docs/             Planning docs
 | `window-manager.ts` | Electron BrowserWindow creation/management |
 | `ipc-handlers.ts` | All IPC channel handlers |
 | `claude-context.ts` | Auto-injects wmux instructions into `~/.claude/CLAUDE.md`, configures hooks, installs wmux-orchestrator plugin |
+| `opencode-context.ts` | Same as claude-context but for OpenCode integration |
 | `claude-observer.ts` | Monitors Claude Code activity for sidebar display |
+| `orchestration-watcher.ts` | Polls `{tmpdir}/wmux-orch-*/state.json` for active wmux-orchestrator runs; broadcasts to all windows |
 | `session-persistence.ts` | Auto-save/restore window state |
+| `settings-store.ts` | Persistent user settings (main-process side); previously renderer-only |
 | `git-poller.ts` | Git branch/dirty status polling |
 | `pr-poller.ts` | GitHub PR status polling |
 | `port-scanner.ts` | Active port detection for running dev servers |
+| `diff-provider.ts` | Provides git diff content for the Diff pane surface type |
 | `theme-loader.ts` | Theme loading |
 | `config-loader.ts` | WT/Ghostty config import |
+| `user-config.ts` | Loads `~/.wmux/config.toml` for terminal prefs and named color schemes |
+| `toml-parser.ts` | Minimal TOML parser (no external dep) used by user-config and config-loader |
 | `shell-detector.ts` | Available shells detection |
-| `updater.ts` | Auto-update (electron-updater) |
+| `v2-bridge.ts` | Table-driven V2 pipe handlers extracted from index.ts dispatch switch |
+| `v2-browser.ts` | Per-caller browser routing — each agent gets its own browser surface (issue #62) |
+| `notification-manager.ts` | Native OS toast notifications via Electron's Notification API |
+| `update-checker.ts` | Checks GitHub releases for updates; distinct from updater.ts (which downloads/installs) |
+| `updater.ts` | Auto-update via electron-updater (gated; update-checker is the primary check path) |
 
 ### Renderer (`src/renderer/`)
 
@@ -77,16 +91,19 @@ docs/             Planning docs
 - `SplitPane/` — PaneWrapper, SplitContainer, SplitDivider, SurfaceTabBar
 - `Terminal/` — TerminalPane, FindBar, CopyMode, NotificationRing
 - `Browser/` — BrowserPane, AddressBar
+- `Diff/` — DiffPane (git diff surface type)
 - `Sidebar/` — Sidebar, WorkspaceRow, SessionMenu, SidebarResizeHandle
 - `Titlebar/` — Titlebar, NotificationBell, NotificationPanel
 - `Settings/` — SettingsWindow + per-category panels
 - `CommandPalette/` — CommandPalette
 - `Markdown/` — MarkdownPane
+- `CheatSheet/` — ShortcutCheatSheet (keyboard shortcut overlay)
 - `Tutorial/` — Tutorial
 
 **Hooks** (in `hooks/`):
 - `useTerminal.ts` — xterm.js lifecycle, PTY connection, OSC notifications, WebGL renderer
 - `useKeyboardShortcuts.ts` — 51+ shortcut actions, safe interception
+- `useUiTheme.ts` — Resolves `system`/`dark`/`light` theme pref to concrete value; sets `data-ui-theme` on `<html>`
 
 **Pipe Bridge** (`pipe-bridge.ts`):
 - Exposes Zustand store operations as `window.__wmux_*` globals
@@ -99,7 +116,9 @@ docs/             Planning docs
 - `settings-slice.ts` — Shortcuts, sidebar prefs, theme
 - `notification-slice.ts` — Notification lifecycle (max 200)
 - `agent-slice.ts` — Agent metadata tracking
+- `orchestration-slice.ts` — Tracks active wmux-orchestrator run state (from orchestration-watcher broadcasts)
 - `split-utils.ts` — Immutable split tree helpers
+- `split-preview-utils.ts` — Preview layout calculations for drag-and-drop surface reordering
 
 ### Preload API (`window.wmux`)
 
@@ -131,6 +150,9 @@ For new Claude Code integrations, add CLI commands in `src/cli/wmux.ts`.
 ### Branded ID Types
 `WorkspaceId`, `PaneId`, `SurfaceId`, `WindowId` — branded string types in `src/shared/types.ts`.
 Pattern: `surf-{uuid}`, `pane-{uuid}`, `ws-{uuid}`, `win-{uuid}`.
+
+### Instance Isolation
+`src/shared/instance.ts` exports `getPipePath()` and `getAppDataDir()`. Setting `WMUX_INSTANCE=<name>` appends a `-<name>` suffix to both the named pipe and APPDATA dir, allowing a dev build to run alongside a production wmux without pipe collision. All code that needs the pipe path or app data dir must use these helpers — never hardcode `\\.\pipe\wmux` or a fixed APPDATA path.
 
 ### Keep-Alive Tabs
 Terminal tabs in a pane are ALL rendered simultaneously (hidden with `visibility: hidden`).
@@ -429,6 +451,7 @@ Test files in `tests/unit/`: agent-manager, cdp-bridge, config-loader, notificat
 
 ## Conventions
 
+- **Source transparency**: When answering investigations or questions, always list every file read and every web source consulted — never omit or abbreviate them.
 - **State**: Zustand slices in `src/renderer/store/`, composed in `index.ts`
 - **IPC**: Channels defined in `src/shared/types.ts`, never use magic strings
 - **CSS**: `src/renderer/styles/`, class prefix per component (`.pane-wrapper__*`, `.surface-tab__*`)
@@ -436,3 +459,15 @@ Test files in `tests/unit/`: agent-manager, cdp-bridge, config-loader, notificat
 - **PTY IDs = Surface IDs**: Always pass `surfaceId` when creating PTYs for reliable re-attachment
 - **No MCP**: All Claude Code integration via CLI commands
 - **French comms**: User communicates in French, code/docs in English
+
+---
+
+## Terminology (from `CONTEXT.md`)
+
+Use these exact terms in code, comments, and UI strings:
+
+| Term | Meaning | Avoid |
+|------|---------|-------|
+| **Surface** | A single terminal/browser/markdown/diff instance shown as a tab inside a pane | Console window, terminal window, panel |
+| **Pane** | A rectangular region in the split tree containing one or more surfaces | Console window, tab |
+| **Live Layout Preview** | Temporary workspace preview shown while dragging a surface tab | Drop zone highlight, ghost split preview |

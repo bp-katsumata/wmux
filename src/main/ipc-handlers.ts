@@ -9,7 +9,7 @@ import { NotificationManager } from './notification-manager';
 import { detectShells } from './shell-detector';
 import { getDefaultTheme, getThemeByName, loadBundledThemes } from './theme-loader';
 import { parseWindowsTerminalConfig, parseGhosttyConfig, loadProjectProfiles, importWindowsTerminalProfiles } from './config-loader';
-import { loadUserConfig, getConfigPath } from './user-config';
+import { loadUserConfig, getConfigPath, writeShortcutsToConfig, startConfigFileWatcher } from './user-config';
 import { WindowManager } from './window-manager';
 import { CDPBridge } from './cdp-bridge';
 import { CDPProxy } from './cdp-proxy';
@@ -157,8 +157,24 @@ export function registerIpcHandlers(windowManager: WindowManager, cdpProxyInstan
     return cfg;
   });
 
+  // Write shortcut overrides (kebab-case key → "Ctrl+D" string) to config.toml.
+  // The file watcher suppresses the immediately following reload so there's no echo.
+  ipcMain.handle(IPC_CHANNELS.CONFIG_WRITE_SHORTCUTS, async (_event, shortcuts: Record<string, string>) => {
+    (startConfigFileWatcher as any)._suppressNext?.();
+    writeShortcutsToConfig(shortcuts);
+  });
+
   // Exposed so diagnostics (and the CLI) can report which path was read.
   ipcMain.handle('config:getUserConfigPath', async () => getConfigPath());
+
+  // Watch ~/.wmux/config.toml for external edits and broadcast reloads.
+  startConfigFileWatcher((cfg) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) {
+        win.webContents.send(IPC_CHANNELS.CONFIG_USER_CONFIG_UPDATED, cfg);
+      }
+    }
+  });
 
   ipcMain.on(IPC_CHANNELS.NOTIFICATION_FIRE, (_event, data: { surfaceId: string; text: string; title?: string }) => {
     const window = BrowserWindow.fromWebContents(_event.sender);

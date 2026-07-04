@@ -48,6 +48,13 @@ export interface UserColorScheme {
 
 export type UiTheme = 'light' | 'dark' | 'system';
 
+export interface ShortcutBinding {
+  key: string;
+  ctrl?: boolean;
+  shift?: boolean;
+  alt?: boolean;
+}
+
 export interface UserConfig {
   terminal?: {
     fontFamily?: string;
@@ -62,6 +69,8 @@ export interface UserConfig {
   appearance?: {
     uiTheme?: UiTheme;
   };
+  /** Keyboard shortcut overrides from `[shortcuts]` section. Keys are camelCase action names. */
+  shortcuts?: Record<string, ShortcutBinding>;
   /** Absolute path the config was read from (for diagnostics). */
   path?: string;
   /** Any parse or mapping errors — non-fatal, surfaced to the renderer. */
@@ -218,6 +227,171 @@ function mapAppearanceSection(root: TomlTable, errors: string[]): NonNullable<Us
   return undefined;
 }
 
+// ---------------------------------------------------------------------------
+// Shortcuts section
+// ---------------------------------------------------------------------------
+
+const SPECIAL_KEY_MAP: Record<string, string> = {
+  arrowleft: 'ArrowLeft', arrowright: 'ArrowRight',
+  arrowup: 'ArrowUp', arrowdown: 'ArrowDown',
+  pagedown: 'PageDown', pageup: 'PageUp',
+  enter: 'Enter', escape: 'Escape',
+  tab: 'Tab', backspace: 'Backspace', delete: 'Delete',
+  home: 'Home', end: 'End', insert: 'Insert',
+  space: ' ',
+};
+
+function normalizeKey(raw: string): string {
+  const lower = raw.toLowerCase();
+  if (SPECIAL_KEY_MAP[lower]) return SPECIAL_KEY_MAP[lower];
+  if (/^f\d{1,2}$/.test(lower)) return lower.toUpperCase();
+  return raw;
+}
+
+function parseShortcutString(s: string): ShortcutBinding | null {
+  const parts = s.split('+').map(p => p.trim());
+  if (parts.length === 0) return null;
+  const keyRaw = parts[parts.length - 1];
+  if (!keyRaw) return null;
+  const modifiers = new Set(parts.slice(0, -1).map(p => p.toLowerCase()));
+  const binding: ShortcutBinding = { key: normalizeKey(keyRaw) };
+  if (modifiers.has('ctrl')) binding.ctrl = true;
+  if (modifiers.has('shift')) binding.shift = true;
+  if (modifiers.has('alt')) binding.alt = true;
+  return binding;
+}
+
+function tomlKeyToAction(key: string): string {
+  return key.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
+}
+
+function mapShortcutsSection(root: TomlTable, errors: string[]): Record<string, ShortcutBinding> | undefined {
+  const section = asTable(root.shortcuts);
+  if (!section) return undefined;
+  const out: Record<string, ShortcutBinding> = {};
+  const seen = new Map<string, string>(); // normalized binding string → action name
+  for (const [tomlKey, value] of Object.entries(section)) {
+    const raw = asString(value);
+    if (!raw) {
+      errors.push(`shortcuts.${tomlKey}: expected string, skipping`);
+      continue;
+    }
+    const binding = parseShortcutString(raw);
+    if (!binding) {
+      errors.push(`shortcuts.${tomlKey}: could not parse "${raw}", skipping`);
+      continue;
+    }
+    const normalized = bindingKey(binding);
+    const conflict = seen.get(normalized);
+    if (conflict) {
+      errors.push(`shortcuts.${tomlKey} conflicts with shortcuts.${conflict}, both skipped`);
+      delete out[tomlKeyToAction(conflict)];
+      continue;
+    }
+    seen.set(normalized, tomlKey);
+    out[tomlKeyToAction(tomlKey)] = binding;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
+function bindingKey(b: ShortcutBinding): string {
+  return `${b.ctrl ? 'c' : ''}${b.alt ? 'a' : ''}${b.shift ? 's' : ''}:${b.key.toLowerCase()}`;
+}
+
+// ---------------------------------------------------------------------------
+// Write-back: update [shortcuts] section in config.toml
+// shortcutStrings: kebab-case action → "Ctrl+D" string (only overrides, not defaults)
+// ---------------------------------------------------------------------------
+
+function removeTomlSection(content: string, section: string): string {
+  const lines = content.split('\n');
+  const result: string[] = [];
+  let inSection = false;
+  for (const line of lines) {
+    const m = line.match(/^\[([^\]]+)\]/);
+    if (m) {
+      if (m[1] === section) { inSection = true; continue; }
+      else if (!m[1].startsWith(section + '.')) inSection = false;
+    }
+    if (!inSection) result.push(line);
+  }
+  // Trim trailing blank lines added by removal
+  while (result.length && result[result.length - 1].trim() === '') result.pop();
+  return result.join('\n');
+}
+
+export function writeShortcutsToConfig(
+  shortcutStrings: Record<string, string>,
+  filePath: string = getConfigPath(),
+): void {
+  let content = '';
+  try {
+    if (fs.existsSync(filePath)) content = fs.readFileSync(filePath, 'utf-8');
+  } catch { /* start fresh */ }
+
+  content = removeTomlSection(content, 'shortcuts');
+
+  if (Object.keys(shortcutStrings).length > 0) {
+    const lines = ['\n[shortcuts]'];
+    for (const [key, value] of Object.entries(shortcutStrings)) {
+      lines.push(`${key} = ${JSON.stringify(value)}`);
+    }
+    content = (content ? content + '\n' : '') + lines.join('\n') + '\n';
+  } else if (content) {
+    content += '\n';
+  }
+
+  const dir = path.dirname(filePath);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(filePath, content, 'utf-8');
+}
+
+// ---------------------------------------------------------------------------
+// File watcher: watch config.toml for external edits and call onReload.
+// Returns an unsubscribe function.
+// ---------------------------------------------------------------------------
+
+export function startConfigFileWatcher(onReload: (cfg: UserConfig) => void): () => void {
+  const configPath = getConfigPath();
+  const configDir = path.dirname(configPath);
+
+  try {
+    if (!fs.existsSync(configDir)) fs.mkdirSync(configDir, { recursive: true });
+  } catch {
+    return () => { /* no-op */ };
+  }
+
+  let debounce: ReturnType<typeof setTimeout> | null = null;
+  let suppressNext = false;
+
+  const onNext = () => { suppressNext = true; };
+  // Attach so callers can suppress the reload that follows their own write.
+  (startConfigFileWatcher as any)._suppressNext = onNext;
+
+  const handleChange = (_event: string, filename: string | null) => {
+    if (filename && filename !== 'config.toml') return;
+    if (suppressNext) { suppressNext = false; return; }
+    if (debounce) clearTimeout(debounce);
+    debounce = setTimeout(() => { onReload(loadUserConfig(configPath)); }, 150);
+  };
+
+  let watcher: fs.FSWatcher | null = null;
+  try {
+    watcher = fs.watch(configDir, handleChange);
+  } catch {
+    return () => { /* no-op */ };
+  }
+
+  return () => {
+    if (debounce) clearTimeout(debounce);
+    watcher?.close();
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Mapping
+// ---------------------------------------------------------------------------
+
 function mapToConfig(root: TomlTable, errors: string[]): UserConfig {
   const out: UserConfig = {};
 
@@ -226,6 +400,9 @@ function mapToConfig(root: TomlTable, errors: string[]): UserConfig {
 
   const appearance = mapAppearanceSection(root, errors);
   if (appearance) out.appearance = appearance;
+
+  const shortcuts = mapShortcutsSection(root, errors);
+  if (shortcuts) out.shortcuts = shortcuts;
 
   return out;
 }

@@ -276,6 +276,7 @@ export const IPC_CHANNELS = {
   CONFIG_GET_USER_CONFIG: 'config:getUserConfig',
   CONFIG_RELOAD_USER_CONFIG: 'config:reloadUserConfig',
   CONFIG_USER_CONFIG_UPDATED: 'config:userConfigUpdated',
+  CONFIG_WRITE_SHORTCUTS: 'config:writeShortcuts',
   // System
   SYSTEM_GET_SHELLS: 'system:getShells',
   SYSTEM_OPEN_EXTERNAL: 'system:openExternal',

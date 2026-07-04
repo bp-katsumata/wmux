@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { ShortcutBinding, ShortcutAction, DEFAULT_SHORTCUTS } from '../../store/settings-slice';
+import { ShortcutBinding, ShortcutAction } from '../../store/settings-slice';
 import { useStore } from '../../store';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -20,9 +20,10 @@ const MODIFIER_KEYS = new Set(['Control', 'Alt', 'Shift', 'Meta']);
 interface ShortcutRecorderProps {
   action: ShortcutAction;
   binding: ShortcutBinding;
+  isTomlManaged?: boolean;
 }
 
-export default function ShortcutRecorder({ action, binding }: ShortcutRecorderProps) {
+export default function ShortcutRecorder({ action, binding, isTomlManaged }: ShortcutRecorderProps) {
   const { shortcuts, setShortcut } = useStore();
   const [recording, setRecording] = useState(false);
   const [conflict, setConflict] = useState<ShortcutAction | null>(null);
@@ -96,6 +97,11 @@ export default function ShortcutRecorder({ action, binding }: ShortcutRecorderPr
       >
         {recording ? 'Press keys...' : bindingToString(binding)}
       </button>
+      {isTomlManaged && !recording && (
+        <span className="shortcut-recorder__toml-badge" title="Set in ~/.wmux/config.toml">
+          config.toml
+        </span>
+      )}
       {conflict && (
         <span className="shortcut-recorder__conflict">
           Conflicts with {conflict}

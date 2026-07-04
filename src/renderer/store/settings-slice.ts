@@ -374,10 +374,38 @@ export const DEFAULT_APPEARANCE_PREFS: AppearancePrefs = {
   uiTheme: 'dark',
 };
 
+// ─── Shortcut → TOML helpers ──────────────────────────────────────────────────
+
+function actionToTomlKey(action: string): string {
+  return action.replace(/([A-Z])/g, (c) => `-${c.toLowerCase()}`);
+}
+
+function bindingToString(b: ShortcutBinding): string {
+  const parts: string[] = [];
+  if (b.ctrl) parts.push('Ctrl');
+  if (b.alt) parts.push('Alt');
+  if (b.shift) parts.push('Shift');
+  parts.push(b.key);
+  return parts.join('+');
+}
+
+function buildTomlShortcutsMap(shortcuts: Record<ShortcutAction, ShortcutBinding>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [action, binding] of Object.entries(shortcuts) as [ShortcutAction, ShortcutBinding][]) {
+    const def = DEFAULT_SHORTCUTS[action];
+    if (bindingToString(binding) !== bindingToString(def)) {
+      out[actionToTomlKey(action)] = bindingToString(binding);
+    }
+  }
+  return out;
+}
+
 // ─── Slice interface ──────────────────────────────────────────────────────────
 
 export interface SettingsSlice {
   shortcuts: Record<ShortcutAction, ShortcutBinding>;
+  /** Actions whose bindings were loaded from config.toml (informational badge in UI). */
+  tomlShortcuts: Set<ShortcutAction>;
   sidebarVisible: boolean;
   sidebarPrefs: SidebarPrefs;
   workspacePrefs: WorkspacePrefs;
@@ -400,6 +428,7 @@ export interface SettingsSlice {
 
   setShortcut(action: ShortcutAction, binding: ShortcutBinding): void;
   resetShortcuts(): void;
+  setTomlShortcuts(shortcuts: Partial<Record<ShortcutAction, ShortcutBinding>>, managed: Set<ShortcutAction>): void;
   toggleSidebar(): void;
   setSidebarPrefs(prefs: Partial<SidebarPrefs>): void;
   setWorkspacePrefs(prefs: Partial<WorkspacePrefs>): void;
@@ -415,7 +444,8 @@ export interface SettingsSlice {
 // ─── Slice creator ────────────────────────────────────────────────────────────
 
 export const createSettingsSlice: StateCreator<SettingsSlice> = (set) => ({
-  shortcuts:         { ...DEFAULT_SHORTCUTS,         ...loadPersisted<Record<ShortcutAction, ShortcutBinding>>(STORAGE_KEYS.shortcuts) },
+  shortcuts:         { ...DEFAULT_SHORTCUTS },
+  tomlShortcuts:     new Set<ShortcutAction>(),
   sidebarVisible:    true,
   sidebarPrefs:      { ...DEFAULT_SIDEBAR_PREFS,      ...loadPersisted<SidebarPrefs>(STORAGE_KEYS.sidebarPrefs) },
   workspacePrefs:    { ...DEFAULT_WORKSPACE_PREFS,    ...loadPersisted<WorkspacePrefs>(STORAGE_KEYS.workspacePrefs) },
@@ -430,14 +460,22 @@ export const createSettingsSlice: StateCreator<SettingsSlice> = (set) => ({
   setShortcut(action: ShortcutAction, binding: ShortcutBinding): void {
     set((state) => {
       const merged = { ...state.shortcuts, [action]: binding };
-      persist(STORAGE_KEYS.shortcuts, merged);
+      const tomlMap = buildTomlShortcutsMap(merged);
+      try { (globalThis as any).window?.wmux?.config?.writeShortcuts?.(tomlMap); } catch { /* no-op */ }
       return { shortcuts: merged };
     });
   },
 
   resetShortcuts(): void {
-    persist(STORAGE_KEYS.shortcuts, DEFAULT_SHORTCUTS);
-    set({ shortcuts: { ...DEFAULT_SHORTCUTS } });
+    try { (globalThis as any).window?.wmux?.config?.writeShortcuts?.({}); } catch { /* no-op */ }
+    set({ shortcuts: { ...DEFAULT_SHORTCUTS }, tomlShortcuts: new Set() });
+  },
+
+  setTomlShortcuts(shortcuts: Partial<Record<ShortcutAction, ShortcutBinding>>, managed: Set<ShortcutAction>): void {
+    set((state) => ({
+      shortcuts: { ...state.shortcuts, ...shortcuts },
+      tomlShortcuts: managed,
+    }));
   },
 
   toggleSidebar(): void {

@@ -57,7 +57,7 @@ export const ACTION_LABELS: Record<ShortcutAction, string> = {
 };
 
 export default function KeyboardSettings() {
-  const { shortcuts, resetShortcuts } = useStore();
+  const { shortcuts, tomlShortcuts, resetShortcuts } = useStore();
 
   return (
     <div className="settings-section">
@@ -70,7 +70,11 @@ export default function KeyboardSettings() {
               <span className="shortcut-action-label">
                 {ACTION_LABELS[action] ?? action}
               </span>
-              <ShortcutRecorder action={action} binding={binding} />
+              <ShortcutRecorder
+                action={action}
+                binding={binding}
+                isTomlManaged={tomlShortcuts.has(action)}
+              />
             </div>
           ),
         )}
