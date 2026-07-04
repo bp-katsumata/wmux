@@ -1,6 +1,7 @@
 node_modules/
 dist/
 release/
+!.claude/skills/release/
 .vite/
 *.log
 .env

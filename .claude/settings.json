@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep *)",
+      "Bash(find . *)",
+      "Bash(find /home*)",
+      "Bash(ls *)",
+      "Bash(ls)",
+      "Bash(npm run *)",
+      "Bash(npx vite build*)",
+      "Bash(npx asar *)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git status*)"
+    ]
+  },
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/stop-build-check.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
