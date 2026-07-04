@@ -9,7 +9,8 @@ import { SerializeAddon } from '@xterm/addon-serialize';
 import { useStore } from '../store';
 import { collectActiveTerminalSurfaceIds } from '../store/split-utils';
 import { SplitNode, ThemeConfig } from '../../shared/types';
-import { UserColorScheme } from '../store/settings-slice';
+import { UserColorScheme, ShortcutBinding, ShortcutAction } from '../store/settings-slice';
+import { matchesBinding } from './useKeyboardShortcuts';
 import { openInWmuxBrowser } from '../utils/open-in-browser';
 import { attachVisibleRenderer, RendererHandle } from '../utils/terminal-renderer';
 import '@xterm/xterm/css/xterm.css';
@@ -280,6 +281,11 @@ export function useTerminal({ surfaceId, shell, cwd, visible = true, focused = t
 
   // Subscribe to relevant settings so changes apply live.
   const prefs = useStore((s) => s.terminalPrefs);
+  const shortcuts = useStore((s) => s.shortcuts);
+  // Ref so the mount-once terminal effect can always read the latest bindings
+  // without shortcuts being in its dependency array (which would recreate the terminal).
+  const shortcutsRef = useRef(shortcuts);
+  shortcutsRef.current = shortcuts;
   const schemeName = resolveSchemeName(colorScheme, prefs.theme);
   const userScheme = prefs.userColorSchemes?.[schemeName];
 
@@ -600,6 +606,16 @@ export function useTerminal({ surfaceId, shell, cwd, visible = true, focused = t
           }
         })();
         return false; // Prevent default — we handle paste ourselves
+      }
+      // Block keys that match wmux shortcuts so the document-level handler can fire.
+      // Skip 'copy' and 'paste' — they are handled above with special terminal logic
+      // (copy only when there's a selection; paste routes through Electron clipboard).
+      if (event.type === 'keydown') {
+        const bindings = shortcutsRef.current;
+        for (const [action, binding] of Object.entries(bindings) as [ShortcutAction, ShortcutBinding][]) {
+          if (action === 'copy' || action === 'paste') continue;
+          if (matchesBinding(event, binding)) return false;
+        }
       }
       return true;
     });

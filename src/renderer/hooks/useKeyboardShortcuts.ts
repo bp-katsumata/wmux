@@ -7,7 +7,7 @@ import { v4 as uuid } from 'uuid';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function matchesBinding(e: KeyboardEvent, binding: ShortcutBinding): boolean {
+export function matchesBinding(e: KeyboardEvent, binding: ShortcutBinding): boolean {
   // Case-insensitive compare for single-letter keys: Shift uppercases e.key on Windows,
   // but bindings are stored lowercase. Without toLowerCase, Ctrl+Shift+letter combos
   // never match (e.g. Ctrl+Shift+N fires with e.key='N' vs binding.key='n').
@@ -20,35 +20,6 @@ function matchesBinding(e: KeyboardEvent, binding: ShortcutBinding): boolean {
   return keyMatch && ctrlMatch && shiftMatch && altMatch;
 }
 
-/**
- * Keys that are safe to intercept even when a terminal has focus.
- * All others with only Ctrl held (no Shift/Alt) are forwarded to the terminal.
- */
-const SAFE_CTRL_KEYS = new Set(['b', 'd', 'n', 't', 'w', 'f', ',']);
-
-function isSafeToIntercept(e: KeyboardEvent): boolean {
-  if (!e.ctrlKey) return true; // Not a Ctrl combo — always safe
-
-  // Ctrl+Shift+* and Ctrl+Alt+* are safe (terminal uses bare Ctrl combos)
-  if (e.shiftKey || e.altKey) return true;
-
-  // Ctrl+PageDown / Ctrl+PageUp are safe
-  if (e.key === 'PageDown' || e.key === 'PageUp') return true;
-
-  // Ctrl+F2 is safe (rename)
-  if (e.key === 'F2') return true;
-
-  // Ctrl+F12 is safe (dev tools)
-  if (e.key === 'F12') return true;
-
-  // Ctrl+= / Ctrl+- / Ctrl+0 are safe (font size)
-  if (e.key === '=' || e.key === '-' || e.key === '0') return true;
-
-  // Specifically whitelisted bare Ctrl keys
-  if (SAFE_CTRL_KEYS.has(e.key.toLowerCase())) return true;
-
-  return false;
-}
 
 // ─── Spatial pane navigation ─────────────────────────────────────────────────
 
@@ -333,12 +304,14 @@ export function useKeyboardShortcuts(
     };
 
     function handleKeyDown(e: KeyboardEvent): void {
-      if (!isSafeToIntercept(e)) return;
-
       const shortcutEntries = Object.entries(shortcuts) as [ShortcutAction, ShortcutBinding][];
 
       for (const [action, binding] of shortcutEntries) {
         if (!matchesBinding(e, binding)) continue;
+
+        // copy/paste are handled by xterm's attachCustomKeyEventHandler (special
+        // terminal logic: copy only when selection exists; paste via Electron API).
+        if (action === 'copy' || action === 'paste') return;
 
         // find and copyMode are handled at PaneWrapper level — don't block them
         if (action === 'find' || action === 'copyMode') return;
