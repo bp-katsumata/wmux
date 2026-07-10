@@ -30,6 +30,11 @@ cp -r src/shell-integration "$PROD_RESOURCES/shell-integration"
 echo "==> Deploying CLI..."
 cp dist/cli/wmux.js "$PROD_RESOURCES/cli/wmux.js"
 
+echo "==> Deploying cli-bin..."
+rm -rf "$PROD_RESOURCES/cli-bin"
+cp -r src/cli-bin "$PROD_RESOURCES/cli-bin"
+chmod +x "$PROD_RESOURCES/cli-bin/wmux"
+
 echo "==> Deploying to production..."
 if rm -rf "$PROD_RESOURCES/app.asar.unpacked" 2>/dev/null; then
   cp build-out/app.asar "$PROD_RESOURCES/app.asar"
