@@ -5,8 +5,18 @@
 export WMUX=1
 
 # wmux CLI shortcut — Claude Code and users can just type: wmux browser open <url>
-wmux() { node "$WMUX_CLI" "$@"; }
-export -f wmux
+# In WSL, the named pipe is Windows-only; use node.exe (Windows Node) with a
+# Windows path so it can connect to \\.\pipe\wmux from within WSL.
+wmux() {
+  [ -z "$WMUX_CLI" ] && { echo "wmux: WMUX_CLI not set — not running inside wmux" >&2; return 1; }
+  if [ -n "$WSL_DISTRO_NAME" ]; then
+    node.exe "$(wslpath -w "$WMUX_CLI")" "$@"
+  else
+    node "$WMUX_CLI" "$@"
+  fi
+}
+# export -f is bash-only; in zsh functions are visible without export
+[ -n "$BASH_VERSION" ] && export -f wmux
 
 _wmux_report() {
     local msg="$1"

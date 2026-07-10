@@ -23,6 +23,13 @@ rm -rf .asar-staging/node_modules/node-pty/build
 echo "==> Packing ASAR..."
 npx asar pack .asar-staging build-out/app.asar --unpack-dir "node_modules/node-pty/prebuilds"
 
+echo "==> Deploying shell-integration..."
+rm -rf "$PROD_RESOURCES/shell-integration"
+cp -r src/shell-integration "$PROD_RESOURCES/shell-integration"
+
+echo "==> Deploying CLI..."
+cp dist/cli/wmux.js "$PROD_RESOURCES/cli/wmux.js"
+
 echo "==> Deploying to production..."
 if rm -rf "$PROD_RESOURCES/app.asar.unpacked" 2>/dev/null; then
   cp build-out/app.asar "$PROD_RESOURCES/app.asar"

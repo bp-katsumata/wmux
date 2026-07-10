@@ -117,12 +117,21 @@ function buildShellArgs(
   }
   if (shellType === 'wsl') {
     env.WMUX_INTEGRATION = '1';
+    // Point zsh at our ZDOTDIR wrapper so the wmux shell integration is sourced
+    // automatically — no changes to the user's ~/.zshrc required. The wrapper
+    // sources $HOME/.zshenv / .zshrc first (preserving the user's config), then
+    // sources wmux-bash-integration.sh via $WMUX_BASH_SCRIPT.
+    // Note: ZDOTDIR is zsh-only. WSL distros using bash as the default shell
+    // will not load the integration and wmux CLI will be unavailable.
+    env.WMUX_BASH_SCRIPT = path.join(integrationDir, 'wmux-bash-integration.sh');
+    env.ZDOTDIR = path.join(integrationDir, 'zdotdir');
     // Propagate WMUX_* vars into the WSL distro (issue #60). Without WSLENV, WSL
     // strips every Windows env var, so the notification framework, sidebar and
     // `wmux` CLI inside WSL can't reach the host. /u = pass through, /up = pass
     // through AND translate the Windows path to a WSL mount (/mnt/c/...).
     const wmuxWslEnv =
-      'WMUX/u:WMUX_SURFACE_ID/u:WMUX_CLI/up:WMUX_PIPE/u:WMUX_PIPE_TOKEN/u:WMUX_INTEGRATION/u';
+      'WMUX/u:WMUX_SURFACE_ID/u:WMUX_CLI/up:WMUX_PIPE/u:WMUX_PIPE_TOKEN/u' +
+      ':WMUX_INTEGRATION/u:WMUX_BASH_SCRIPT/up:ZDOTDIR/up';
     env.WSLENV = env.WSLENV ? `${env.WSLENV}:${wmuxWslEnv}` : wmuxWslEnv;
     // A restored WSL/POSIX cwd (issue #60) can't be a Win32 process cwd (error
     // 267). Open it INSIDE the distro via --cd instead; the Win32-side cwd is
