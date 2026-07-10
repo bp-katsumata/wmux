@@ -20,8 +20,13 @@ wmux() {
 
 _wmux_report() {
     local msg="$1"
-    # Write to temp file for main process to pick up
-    local tmpdir="/mnt/c/Users/${USER}/AppData/Local/Temp/wmux"
+    # Derive the Windows user home from WMUX_CLI (which carries the correct
+    # Windows username via WSLENV path translation) instead of $USER, which is
+    # the Linux username and may differ (e.g. dots vs underscores).
+    local win_home
+    win_home=$(echo "$WMUX_CLI" | sed -n 's|^\(/mnt/[a-zA-Z]/Users/[^/]*\).*|\1|p')
+    [ -z "$win_home" ] && return
+    local tmpdir="${win_home}/AppData/Local/Temp/wmux"
     mkdir -p "$tmpdir" 2>/dev/null
     echo "$msg" >> "$tmpdir/messages"
 }
