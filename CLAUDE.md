@@ -56,7 +56,7 @@ $env:WMUX_INSTANCE="dev"; & "C:\Users\yuuki.katsumata\Downloads\wmux-dev\wmux.ex
 ```
 
 ```bash
-# Deploy to production (close wmux first — running processes will not be restored)
+# Deploy to production
 npm run deploy:prod
 ```
 
