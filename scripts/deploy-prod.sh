@@ -36,21 +36,13 @@ cp -r src/cli-bin "$PROD_RESOURCES/cli-bin"
 chmod +x "$PROD_RESOURCES/cli-bin/wmux"
 
 echo "==> Deploying to production..."
+cp build-out/app.asar "$PROD_RESOURCES/app.asar"
+
+# Update native modules when wmux is closed (locked files are skipped silently)
 if rm -rf "$PROD_RESOURCES/app.asar.unpacked" 2>/dev/null; then
-  cp build-out/app.asar "$PROD_RESOURCES/app.asar"
   cp -r build-out/app.asar.unpacked "$PROD_RESOURCES/app.asar.unpacked"
-  echo ""
-  echo "==> Done. 本番 wmux を起動してください:"
-  echo '    C:\Users\yuuki.katsumata\AppData\Local\wmux\wmux.exe'
-else
-  echo "    wmux 起動中 — app.asar のみ差し替えます (native modules は次回起動時に更新)"
-  if cp build-out/app.asar "$PROD_RESOURCES/app.asar" 2>/dev/null; then
-    echo ""
-    echo "==> Done (hot-swap). 変更を反映するには wmux を再起動してください:"
-    echo '    C:\Users\yuuki.katsumata\AppData\Local\wmux\wmux.exe'
-  else
-    echo ""
-    echo "ERROR: app.asar も使用中です。wmux を終了してから再実行してください。"
-    exit 1
-  fi
 fi
+
+echo ""
+echo "==> Done. 変更を反映するには wmux を再起動してください:"
+echo '    C:\Users\yuuki.katsumata\AppData\Local\wmux\wmux.exe'

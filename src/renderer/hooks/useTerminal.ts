@@ -122,6 +122,13 @@ const surfaceMouseEnabled = new Map<string, boolean>();
 const surfaceBufferCache = new Map<string, string>();
 const MAX_BUFFER_CACHE = 32;
 
+// Live xterm instances keyed by surfaceId, so the pipe bridge can read screen
+// content (surface.read_text / `wmux read-screen`) from the active buffer.
+// Module-level like surfaceMouseEnabled: survives remounts; entries are
+// registered on mount and removed on unmount (guarded so a StrictMode
+// setup→cleanup→setup sequence can't delete the replacement instance).
+export const surfaceTerminalRegistry = new Map<string, Terminal>();
+
 // Convert a wheel delta to a line count (sign preserved, magnitude ≥ 1).
 function wheelDeltaToLines(ev: WheelEvent, rows: number): number {
   let amount: number;
@@ -373,6 +380,8 @@ export function useTerminal({ surfaceId, shell, cwd, visible = true, focused = t
 
     // Open terminal in the DOM
     terminal.open(terminalRef.current);
+
+    if (surfaceId) surfaceTerminalRegistry.set(surfaceId, terminal);
 
     // Restore a buffer snapshot captured before a previous unmount (issue #49).
     // Written now — before the PTY reattaches below — so the restored scrollback
@@ -645,6 +654,20 @@ export function useTerminal({ surfaceId, shell, cwd, visible = true, focused = t
       // Wire PTY exit → inform user
       const unsubExit = window.wmux.pty.onExit(id, (_code: number) => {
         terminal.writeln('\r\n\x1b[2m[process exited]\x1b[0m');
+        // Auto-heal a stuck "Running" badge. shellState is a single
+        // last-writer-wins workspace field, written only by the in-pane shell
+        // integration (report_shell_state). A shell that emits "running" but is
+        // killed before returning to its prompt (e.g. an orchestration agent TUI
+        // reaped at teardown) never emits the matching "idle", stranding the
+        // sidebar on "Running". A PTY that has exited cannot be the running
+        // command, so clear it here.
+        try {
+          const store = useStore.getState();
+          const ws = store.workspaces.find((w) => treeHasSurface(w.splitTree, id));
+          if (ws && ws.shellState === 'running') {
+            store.updateWorkspaceMetadata(ws.id, { shellState: 'idle' });
+          }
+        } catch { /* best-effort: badge reset is non-critical */ }
       });
 
       cleanupFnsRef.current.push(unsubData, unsubExit);
@@ -824,6 +847,13 @@ export function useTerminal({ surfaceId, shell, cwd, visible = true, focused = t
         }
       }
 
+      // Drop the read-screen registry entry — but only if it still points at
+      // THIS terminal (StrictMode re-setup may already have registered the
+      // replacement instance under the same surfaceId).
+      if (surfaceId && surfaceTerminalRegistry.get(surfaceId) === terminal) {
+        surfaceTerminalRegistry.delete(surfaceId);
+      }
+
       // Release the GPU renderer (and its WebGL budget slot) before disposing
       rendererRef.current?.dispose();
       rendererRef.current = null;
@@ -833,7 +863,6 @@ export function useTerminal({ surfaceId, shell, cwd, visible = true, focused = t
       xtermRef.current = null;
       ptyIdRef.current = null;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Paste delegated from the keyboard-shortcut handler (e.g. Ctrl+Shift+V).

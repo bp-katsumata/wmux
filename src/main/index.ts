@@ -33,6 +33,9 @@ function routeSpecialV2(
     handleBrowserV2(request.method, request.params, respond, respondError);
     return true;
   }
+  if (request.method.startsWith('window.')) {
+    return handleWindowV2(request.method, request.params, respond, respondError);
+  }
   return handleBridgeV2(request.method, request.params, respond, respondError);
 }
 
@@ -77,6 +80,37 @@ function spawnAgentBatch(
 }
 
 const windowManager = new WindowManager();
+
+// window.* V2 methods (issue #78) run entirely in the main process against
+// windowManager — no renderer bridge involved. Returns true when handled so
+// the main dispatch switch can be skipped.
+function handleWindowV2(
+  method: string,
+  params: any,
+  respond: (result: any) => void,
+  respondError: (code: number, message: string) => void,
+): boolean {
+  switch (method) {
+    case 'window.create':
+      // Second OS window — lets users spread workspaces across monitors
+      // without a second wmux instance. Same code path as the Ctrl+Shift+N
+      // shortcut, just reachable from the CLI/agents.
+      respond({ windowId: windowManager.createWindow() });
+      return true;
+    case 'window.list':
+      respond({ windows: windowManager.listWindows() });
+      return true;
+    case 'window.focus': {
+      const id = params?.id || params?.windowId;
+      if (!id) { respondError(-32602, 'Missing window id'); return true; }
+      windowManager.focusWindow(id);
+      respond({ ok: true });
+      return true;
+    }
+    default:
+      return false;
+  }
+}
 // Per-instance secret that authenticates privileged (V2) pipe requests.
 // Generated/persisted once per APPDATA dir and injected into spawned shells
 // as WMUX_PIPE_TOKEN so the CLI and hooks can authenticate.
@@ -400,6 +434,7 @@ app.whenReady().then(() => {
         respond({ protocols: ['v1', 'v2'], features: ['workspaces', 'splits', 'notifications'] });
         break;
       // workspace.* and pane.split/close handled by handleBridgeV2 (./v2-bridge).
+      // window.* handled by handleWindowV2 above.
       case 'pane.focus': {
         // Focus the first surface in the specified pane
         (async () => {
@@ -531,9 +566,34 @@ app.whenReady().then(() => {
         break;
       }
       case 'surface.read_text': {
-        // Read screen content — not easily available from PTY buffer directly.
-        // Return a note that this requires xterm.js serializer addon in the renderer.
-        respond({ text: '', note: 'Screen reading requires renderer-side xterm serializer' });
+        // Screen content lives in the renderer (xterm owns the buffer), so
+        // delegate to the __wmux_readScreen bridge global. It reads the ACTIVE
+        // buffer — alt buffer included — so full-screen TUIs return what is
+        // actually visible, as plain text (no ANSI escapes).
+        (async () => {
+          try {
+            const surfaceId = await resolvePtySurface(request.params?.surfaceId || request.params?.id);
+            if (!surfaceId.ok) { respondError(-32000, surfaceId.error); return; }
+            const rawLines = Number(request.params?.lines);
+            const lines = Number.isFinite(rawLines)
+              ? Math.min(Math.max(Math.floor(rawLines), 1), 10000)
+              : 50;
+            // The surface's terminal is mounted in exactly one window; probe
+            // each until one has it, keeping the first miss as the error.
+            let result: { text?: string; error?: string } | null = null;
+            for (const win of BrowserWindow.getAllWindows()) {
+              if (win.isDestroyed()) continue;
+              const r = await win.webContents.executeJavaScript(
+                `window.__wmux_readScreen?.(${JSON.stringify(surfaceId.id)}, ${lines})`
+              );
+              if (r && !r.error) { result = r; break; }
+              if (r && !result) result = r;
+            }
+            if (!result) { respondError(-32000, 'No window'); return; }
+            if (result.error) { respondError(-32000, result.error); return; }
+            respond(result);
+          } catch (err: any) { respondError(-32000, err.message); }
+        })();
         break;
       }
       case 'surface.trigger_flash': {
@@ -603,6 +663,24 @@ app.whenReady().then(() => {
             respond({ ok: true });
           } catch (err: any) { respondError(-32000, err.message); }
         })();
+        break;
+      }
+
+      // ─── Workspace status handler ─────────────────────────────────────────
+      case 'workspace.set_status': {
+        // Set a named workspace's sidebar status by id (e.g. an orchestration
+        // coordinator marking a workspace idle when all waves finish). Keyed on
+        // workspaceId, not surfaceId, so it works from outside any pane.
+        BrowserWindow.getAllWindows().forEach(w => {
+          if (!w.isDestroyed()) {
+            w.webContents.send(IPC_CHANNELS.METADATA_UPDATE, {
+              command: 'set_workspace_status',
+              workspaceId: request.params?.workspaceId,
+              args: [request.params?.state || '', request.params?.text || ''],
+            });
+          }
+        });
+        respond({ ok: true });
         break;
       }
 

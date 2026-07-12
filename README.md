@@ -134,6 +134,22 @@ Download [wmux-0.7.10-win-x64.zip](https://github.com/amirlehmam/wmux/releases/l
 
 > **Note:** After extracting, right-click the zip before extracting and select **Unblock** if Windows SmartScreen warns about the executable.
 
+### Updates & security
+
+wmux checks GitHub Releases for updates. Downloaded updates are held in a
+quarantine window (3 days by default) before installing, and installs always
+require an explicit confirmation click — nothing is applied silently.
+
+Release artifacts are **not yet Authenticode-signed** (SignPath OSS approval is
+pending; the CI signing pipeline is wired and activates automatically once the
+signing secrets are configured). Until signing lands, security-sensitive or
+air-gapped environments can control the updater with environment variables:
+
+| Variable | Effect |
+|----------|--------|
+| `WMUX_DISABLE_UPDATER=1` | Disable the auto-updater entirely (update manually from GitHub Releases) |
+| `WMUX_MIN_RELEASE_AGE_DAYS=N` | Change the quarantine window (default 3 days) |
+
 ### From source
 
 ```bash
@@ -282,6 +298,9 @@ wmux ping                          # Check if wmux is running
 wmux notify "Build complete"       # Send a notification
 wmux new-workspace --title "API"   # Create a workspace
 wmux list-workspaces               # List all workspaces
+wmux ssh user@host                 # Remote terminal (OpenSSH) in a new workspace
+wmux ssh -p 2222 user@host --title "prod"  # Extra args are passed through to ssh
+wmux new-window                    # Second wmux window (e.g. for another monitor)
 wmux split --right                 # Split focused pane
 wmux send "npm test"               # Send text to terminal
 wmux send-key Enter --ctrl         # Send keystroke
@@ -295,6 +314,17 @@ wmux browser type @e3 "hello"      # Type into input by ref
 wmux browser fill @e3 "value"      # Set input value directly
 wmux browser screenshot            # Base64 PNG screenshot
 wmux browser eval "document.title" # Run JavaScript
+
+# Remote wmux management (SSH tunnel)
+# On the remote machine — expose its wmux pipe on localhost TCP and get its token:
+wmux bridge                        # 127.0.0.1:9787 ↔ \\.\pipe\wmux (pure relay, token still required)
+wmux token                         # print the auth token, copy it
+
+# On your machine — tunnel the port, then drive the remote wmux with any command:
+# ssh -L 9787:127.0.0.1:9787 user@host
+wmux --remote 127.0.0.1:9787 --token <TOKEN> list-workspaces
+wmux --remote 127.0.0.1:9787 --token <TOKEN> new-workspace --title "api"
+# Or set once: WMUX_REMOTE=127.0.0.1:9787 and WMUX_REMOTE_TOKEN=<TOKEN>
 
 # Agents
 wmux agent spawn --cmd "claude --resume abc" --label "Research"

@@ -52,6 +52,23 @@ function resolveShell(shell: string | undefined): string {
   return getDefaultShell();
 }
 
+// A shell spec may be a bare executable ("pwsh.exe", an absolute path that can
+// contain spaces) or a command line with arguments ("ssh user@host",
+// '"C:\Tools\my shell.exe" --flag') — issue #78 remote terminals ride on the
+// latter. An existing absolute path is always treated as a bare executable so
+// legacy specs like "C:\Program Files\PowerShell\7\pwsh.exe" never get split.
+export function parseShellSpec(spec: string | undefined): { command: string; args: string[] } {
+  const trimmed = (spec || '').trim();
+  if (!trimmed) return { command: '', args: [] };
+  if (path.isAbsolute(trimmed) && fs.existsSync(trimmed)) {
+    return { command: trimmed, args: [] };
+  }
+  if (!/\s/.test(trimmed)) return { command: trimmed, args: [] };
+  const tokens = (trimmed.match(/"[^"]*"|\S+/g) ?? []).map((t) => t.replace(/^"|"$/g, ''));
+  const [command = '', ...args] = tokens;
+  return { command, args };
+}
+
 function getShellIntegrationPath(): string {
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -76,6 +93,24 @@ function getCliPath(): string {
     // Not running in Electron
   }
   return path.join(__dirname, '../cli/wmux.js');
+}
+
+// Dir holding the `wmux`/`wmux.cmd` shims (each runs `node $WMUX_CLI`). Prepended
+// to PATH in every spawned shell so bare `wmux` resolves in NON-interactive shells
+// too (Claude Code's Bash tool, orchestrator hook scripts) — the interactive
+// `wmux` shell function only exists in the pane's own interactive shell. The dir
+// has no wmux.exe, so there is no PATHEXT collision with the GUI.
+function getCliBinPath(): string {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { app } = require('electron') as typeof import('electron');
+    if (app.isPackaged) {
+      return path.join(process.resourcesPath, 'cli-bin');
+    }
+  } catch {
+    // Not running in Electron
+  }
+  return path.join(__dirname, '../../src/cli-bin');
 }
 
 function getShellType(shell: string): 'powershell' | 'cmd' | 'wsl' | 'unknown' {
@@ -229,7 +264,12 @@ export class PtyManager {
       }
     }
 
-    const shell = resolveShell(options.shell);
+    // Split "ssh user@host"-style specs into executable + args (issue #78).
+    // Extra args only apply when the REQUESTED executable resolved — if we fell
+    // back to the default shell, its command line must not inherit ssh's args.
+    const spec = parseShellSpec(options.shell);
+    const shell = resolveShell(spec.command);
+    const shellExtraArgs = shell === spec.command ? spec.args : [];
     const shellType = getShellType(shell);
     const integrationDir = getShellIntegrationPath();
     const cliPath = getCliPath();
@@ -245,9 +285,25 @@ export class PtyManager {
       WMUX_PIPE: getPipePath(),
       WMUX_PIPE_TOKEN: readPipeToken(),
       WMUX_CLI: cliPath,
+      // Advertise true-color support so Claude Code and other tools render diffs
+      // with 24-bit colors instead of 256-color palette indices. Without this,
+      // palette colors chosen for diff highlighting can be near-invisible against
+      // the terminal's dark background (e.g. Monokai foreground ≈ background).
+      COLORTERM: 'truecolor',
     };
 
-    const args = buildShellArgs(shellType, env, integrationDir, options.cwd);
+    // Make bare `wmux` resolvable in every spawned shell AND all its children
+    // (Claude Code's Bash tool, hook scripts, the orchestrator coordinator) by
+    // prepending the cli-bin shim dir to PATH. PATH inherits down the process
+    // tree regardless of shell/login/interactive state — which is exactly what
+    // the interactive `wmux` shell function cannot reach. Prepend (not append)
+    // so this instance's shim wins; it is instance-scoped via $WMUX_CLI/$WMUX_PIPE
+    // anyway. The Windows env key is `Path`, so match case-insensitively.
+    const cliBinDir = getCliBinPath();
+    const pathKey = Object.keys(env).find((k) => k.toLowerCase() === 'path') ?? 'PATH';
+    env[pathKey] = env[pathKey] ? `${cliBinDir}${path.delimiter}${env[pathKey]}` : cliBinDir;
+
+    const args = [...buildShellArgs(shellType, env, integrationDir, options.cwd), ...shellExtraArgs];
 
     // Quick-launch startup commands (issue #32). Run them as part of the shell's
     // own initialization — BEFORE the first interactive prompt — instead of

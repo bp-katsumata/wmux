@@ -15,8 +15,12 @@ import { fetchLatestRelease } from './update-checker';
 //   2. No silent install — autoDownload/autoInstallOnAppQuit are off; the user
 //      must explicitly confirm the install via a dialog.
 //
-// (Signature verification + Authenticode + build provenance are tracked as
-// follow-ups in the issue; they need offline keys / CI changes, not just code.)
+// Authenticode signing is wired in CI (issue #71): release.yml signs wmux.exe
+// via SignPath once the SIGNPATH_* secrets are configured, and electron-builder
+// pins publisherName ("SignPath Foundation") so signed exe/NSIS update flows
+// verify the publisher. The current zip-based update artifact cannot itself be
+// Authenticode-verified by electron-updater, so the quarantine window below
+// remains the primary client-side control until the artifact format changes.
 
 const DEFAULT_MIN_RELEASE_AGE_DAYS = 3;
 const RECHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
@@ -43,8 +47,30 @@ async function releaseAgeMs(version: string): Promise<number | null> {
 }
 
 let installPrompted = false;
+let missingChannelFileWarned = false;
+
+// A release without latest.yml (manual/partial releases, transient GitHub
+// errors) is an expected condition, not a failure — the notify-only checker in
+// update-checker.ts still covers it (issue #68).
+export function isMissingChannelFileError(err: unknown): boolean {
+  const e = err as { code?: string; message?: string } | null | undefined;
+  if (e?.code === 'ERR_UPDATER_CHANNEL_FILE_NOT_FOUND') return true;
+  const msg = e?.message || String(err ?? '');
+  return msg.includes('ERR_UPDATER_CHANNEL_FILE_NOT_FOUND') || msg.includes('Cannot find latest.yml');
+}
+
+export function isUpdaterDisabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.WMUX_DISABLE_UPDATER === '1';
+}
 
 export function initAutoUpdater(): void {
+  // Kill switch for air-gapped / corporate / sandboxed environments that
+  // cannot (or should not) reach GitHub (issue #68).
+  if (isUpdaterDisabled()) {
+    console.log('[updater] Disabled via WMUX_DISABLE_UPDATER=1');
+    return;
+  }
+
   // Gate both download and install — nothing happens without passing the
   // quarantine window and an explicit user click.
   autoUpdater.autoDownload = false;
@@ -96,6 +122,13 @@ export function initAutoUpdater(): void {
   });
 
   autoUpdater.on('error', (err) => {
+    if (isMissingChannelFileError(err)) {
+      if (!missingChannelFileWarned) {
+        missingChannelFileWarned = true;
+        console.warn('[updater] latest.yml not found in latest release — update check skipped.');
+      }
+      return;
+    }
     console.error('[updater] Auto-updater error:', err);
   });
 
