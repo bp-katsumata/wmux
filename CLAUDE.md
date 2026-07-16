@@ -56,7 +56,7 @@ $env:WMUX_INSTANCE="dev"; & "C:\Users\yuuki.katsumata\Downloads\wmux-dev\wmux.ex
 ```
 
 ```bash
-# Deploy to production
+# Deploy to production (hot-swap対応 — 起動中でも上書き可。変更反映には再起動が必要)
 npm run deploy:prod
 ```
 

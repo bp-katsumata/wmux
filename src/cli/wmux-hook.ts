@@ -24,6 +24,8 @@ if (argv[0] === '--event') {
 }
 
 const pipePath = process.env.WMUX_PIPE || '\\\\.\\pipe\\wmux';
+const tcpPort = Number(process.env.WMUX_TCP_PORT || '0');
+const useWsl = process.platform !== 'win32';
 const token = process.env.WMUX_PIPE_TOKEN || '';
 const surfaceId = process.env.WMUX_SURFACE_ID || '';
 
@@ -59,7 +61,10 @@ function sendHook(): void {
   if (message) params.message = message;
   if (surfaceId) params.surfaceId = surfaceId;
 
-  const client = net.connect({ path: pipePath }, () => {
+  const connectOpts = (useWsl && tcpPort)
+    ? { host: '127.0.0.1', port: tcpPort }
+    : { path: pipePath };
+  const client = net.connect(connectOpts, () => {
     const msg = JSON.stringify({ method: 'hook.event', params, id: 1, token });
     client.write(msg + '\n', () => client.end());
   });

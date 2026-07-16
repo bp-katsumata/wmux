@@ -14,7 +14,7 @@ import { loadSession, saveSession, handleVersionChange, SessionData } from './se
 import { WindowManager } from './window-manager';
 import { initAutoUpdater } from './updater';
 import { initUpdateChecker, getLatestUpdate } from './update-checker';
-import { ensureClaudeContext, ensureClaudeHooks, ensureChromeDevtoolsConfig, ensureOrchestratorPlugin } from './claude-context';
+import { ensureClaudeContext, ensureClaudeHooks, ensureWslClaudeHooks, ensureChromeDevtoolsConfig, ensureOrchestratorPlugin } from './claude-context';
 import { ensureOpencodeContext, ensureOpencodePlugin } from './opencode-context';
 import { applyExternalActivity } from './claude-observer';
 import { startOrchestrationWatcher } from './orchestration-watcher';
@@ -314,6 +314,9 @@ app.whenReady().then(() => {
   // Inject wmux instructions into ~/.claude/CLAUDE.md for Claude Code awareness
   ensureClaudeContext();
   ensureClaudeHooks();
+  // Deferred: shells out to wsl.exe twice and can block for several seconds on a
+  // cold WSL start. Run after the current tick so the window appears first.
+  setTimeout(() => ensureWslClaudeHooks(), 0);
   ensureChromeDevtoolsConfig();
   ensureOrchestratorPlugin();
   ensureOpencodeContext();
@@ -363,8 +366,11 @@ app.whenReady().then(() => {
   // Kick off the first auto-save cycle after the window is ready
   scheduleAutoSave();
 
-  // Start named pipe server
+  // Start named pipe server + TCP bridge (for wmux-hook.js running inside WSL)
   pipeServer.start();
+  pipeServer.startTcp().then((port) => {
+    process.env.WMUX_TCP_PORT = String(port);
+  }).catch(() => {});
   cdpProxy.start().catch(() => {}); // CDP proxy is optional — don't crash if ports are busy
 
   // Watch TMPDIR for wmux-orchestrator runs and push state to the sidebar.

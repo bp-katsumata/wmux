@@ -29,6 +29,7 @@ cp -r src/shell-integration "$PROD_RESOURCES/shell-integration"
 
 echo "==> Deploying CLI..."
 cp dist/cli/wmux.js "$PROD_RESOURCES/cli/wmux.js"
+cp dist/cli/wmux-hook.js "$PROD_RESOURCES/cli/wmux-hook.js"
 
 echo "==> Deploying cli-bin..."
 rm -rf "$PROD_RESOURCES/cli-bin"

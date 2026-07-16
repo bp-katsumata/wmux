@@ -278,7 +278,7 @@ export const DEFAULT_WORKSPACE_PREFS: WorkspacePrefs = {
   autoReorderOnNotification: false,
   defaultShell: '',
   showWelcomeScreen: true,
-  autoOpenDiffTab: true,
+  autoOpenDiffTab: false,
 };
 
 // ─── Terminal settings ────────────────────────────────────────────────────────

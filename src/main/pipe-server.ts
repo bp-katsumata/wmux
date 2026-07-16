@@ -37,8 +37,10 @@ export interface V2Response {
 
 export class PipeServer extends EventEmitter {
   private server: net.Server | null = null;
+  private tcpServer: net.Server | null = null;
   private pipePath: string;
   private authToken: string;
+  private _tcpPort = 0;
 
   constructor(pipePath = '\\\\.\\pipe\\wmux', authToken = '') {
     super();
@@ -46,40 +48,39 @@ export class PipeServer extends EventEmitter {
     this.authToken = authToken;
   }
 
-  start(): void {
-    this.server = net.createServer((socket) => {
-      let buffer = '';
+  get tcpPort(): number { return this._tcpPort; }
 
-      socket.on('data', (data) => {
-        buffer += data.toString();
+  private handleConnection(socket: net.Socket): void {
+    let buffer = '';
 
-        // Process complete lines
-        let newlineIdx: number;
-        while ((newlineIdx = buffer.indexOf('\n')) !== -1) {
-          const line = buffer.substring(0, newlineIdx).trim();
-          buffer = buffer.substring(newlineIdx + 1);
+    socket.on('data', (data) => {
+      buffer += data.toString();
 
-          if (!line) continue;
+      let newlineIdx: number;
+      while ((newlineIdx = buffer.indexOf('\n')) !== -1) {
+        const line = buffer.substring(0, newlineIdx).trim();
+        buffer = buffer.substring(newlineIdx + 1);
 
-          // Try JSON-RPC (V2) first
-          if (line.startsWith('{')) {
-            try {
-              const request = JSON.parse(line) as V2Request;
-              this.handleV2(request, socket);
-            } catch {
-              socket.write(JSON.stringify({ error: { code: -32700, message: 'Parse error' } }) + '\n');
-            }
-          } else {
-            // V1 text protocol
-            this.handleV1(line, socket);
+        if (!line) continue;
+
+        if (line.startsWith('{')) {
+          try {
+            const request = JSON.parse(line) as V2Request;
+            this.handleV2(request, socket);
+          } catch {
+            socket.write(JSON.stringify({ error: { code: -32700, message: 'Parse error' } }) + '\n');
           }
+        } else {
+          this.handleV1(line, socket);
         }
-      });
-
-      socket.on('error', () => {
-        // Client disconnected, ignore
-      });
+      }
     });
+
+    socket.on('error', () => {});
+  }
+
+  start(): void {
+    this.server = net.createServer((socket) => this.handleConnection(socket));
 
     this.server.listen(this.pipePath, () => {
       console.log(`wmux pipe server listening on ${this.pipePath}`);
@@ -87,20 +88,32 @@ export class PipeServer extends EventEmitter {
 
     this.server.on('error', (err: NodeJS.ErrnoException) => {
       if (err.code === 'EADDRINUSE') {
-        // Pipe already exists, try to clean up and retry
         net.connect({ path: this.pipePath }, () => {}).on('error', () => {
-          // No one is listening, safe to unlink and retry
           this.server?.close();
-          // On Windows, just retry after a short delay
           setTimeout(() => this.start(), 500);
         });
       }
     });
   }
 
+  startTcp(): Promise<number> {
+    return new Promise((resolve, reject) => {
+      this.tcpServer = net.createServer((socket) => this.handleConnection(socket));
+      this.tcpServer.listen(0, '127.0.0.1', () => {
+        const addr = this.tcpServer!.address() as net.AddressInfo;
+        this._tcpPort = addr.port;
+        console.log(`wmux TCP bridge listening on 127.0.0.1:${this._tcpPort}`);
+        resolve(this._tcpPort);
+      });
+      this.tcpServer.on('error', reject);
+    });
+  }
+
   stop(): void {
     this.server?.close();
     this.server = null;
+    this.tcpServer?.close();
+    this.tcpServer = null;
   }
 
   private handleV1(line: string, socket: net.Socket): void {

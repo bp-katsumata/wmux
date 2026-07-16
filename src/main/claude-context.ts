@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { execSync } from 'child_process';
 
 const START_MARKER = '<!-- wmux:start';
 const END_MARKER = '<!-- wmux:end -->';
@@ -128,10 +129,13 @@ export function applyWmuxHooks(settings: any, hookScript: string): any {
   const makeEventCmd = (event: string) => `node "${hookScript}" --event ${event} 2>/dev/null || true`;
 
   // Drop any prior wmux entry from a hook array, preserving user hooks.
+  // Matches both hard-coded paths (.../wmux-hook.js) and the WSL env-var form ($WMUX_HOOK).
   const stripWmux = (entries: any): any[] =>
     (Array.isArray(entries) ? entries : []).filter((e: any) => {
       if (!Array.isArray(e.hooks)) return true;
-      return !e.hooks.some((h: any) => h.command?.includes('wmux-hook'));
+      return !e.hooks.some((h: any) =>
+        h.command?.includes('wmux-hook') || h.command?.includes('$WMUX_HOOK')
+      );
     });
 
   // PostToolUse — one entry per tracked tool for specific sidebar tracking.
@@ -197,6 +201,36 @@ export function ensureClaudeHooks(): void {
     console.log('[wmux] Configured PostToolUse/Notification/Stop hooks in ~/.claude/settings.json');
   } catch (err) {
     console.warn('[wmux] Failed to update Claude hooks:', err);
+  }
+}
+
+/**
+ * Ensures the WSL default distro's ~/.claude/settings.json has wmux hooks that use
+ * $WMUX_HOOK (WSL-compatible env var, path-converted by WSLENV) and connect back to
+ * wmux via TCP (127.0.0.1:$WMUX_TCP_PORT) instead of the Windows Named Pipe.
+ * Called once on startup after ensureClaudeHooks().
+ */
+export function ensureWslClaudeHooks(): void {
+  try {
+    const distroName = execSync('wsl.exe -e sh -c "echo $WSL_DISTRO_NAME"', { encoding: 'utf-8', timeout: 5000 }).trim();
+    const homeDir = execSync('wsl.exe -e sh -c "echo $HOME"', { encoding: 'utf-8', timeout: 5000 }).trim();
+    if (!distroName || !homeDir) return;
+
+    // UNC path: \\wsl.localhost\<distro>\home\<user>\.claude\settings.json
+    const wslSettingsPath = path.join(`\\\\wsl.localhost\\${distroName}`, homeDir.replace(/\//g, '\\'), '.claude', 'settings.json');
+    if (!fs.existsSync(wslSettingsPath)) return;
+
+    const raw = fs.readFileSync(wslSettingsPath, 'utf-8');
+    let settings: any;
+    try { settings = JSON.parse(raw); } catch { return; }
+
+    // Use the $WMUX_HOOK env var as the script path — WSLENV converts it to a
+    // WSL-compatible mount path (/mnt/c/...) at shell spawn time.
+    const updated = applyWmuxHooks(settings, '$WMUX_HOOK');
+    fs.writeFileSync(wslSettingsPath, JSON.stringify(updated, null, 2), 'utf-8');
+    console.log('[wmux] Configured WSL Claude hooks in', wslSettingsPath);
+  } catch (err) {
+    console.warn('[wmux] Failed to update WSL Claude hooks:', err);
   }
 }
 

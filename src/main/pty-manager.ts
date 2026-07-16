@@ -95,6 +95,19 @@ function getCliPath(): string {
   return path.join(__dirname, '../cli/wmux.js');
 }
 
+function getHookPath(): string {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { app } = require('electron') as typeof import('electron');
+    if (app.isPackaged) {
+      return path.join(process.resourcesPath, 'cli', 'wmux-hook.js');
+    }
+  } catch {
+    // Not running in Electron
+  }
+  return path.join(__dirname, '../cli/wmux-hook.js');
+}
+
 // Dir holding the `wmux`/`wmux.cmd` shims (each runs `node $WMUX_CLI`). Prepended
 // to PATH in every spawned shell so bare `wmux` resolves in NON-interactive shells
 // too (Claude Code's Bash tool, orchestrator hook scripts) — the interactive
@@ -166,7 +179,8 @@ function buildShellArgs(
     // through AND translate the Windows path to a WSL mount (/mnt/c/...).
     const wmuxWslEnv =
       'WMUX/u:WMUX_SURFACE_ID/u:WMUX_CLI/up:WMUX_PIPE/u:WMUX_PIPE_TOKEN/u' +
-      ':WMUX_INTEGRATION/u:WMUX_BASH_SCRIPT/up:ZDOTDIR/up';
+      ':WMUX_INTEGRATION/u:WMUX_BASH_SCRIPT/up:ZDOTDIR/up' +
+      ':WMUX_HOOK/up:WMUX_TCP_PORT/u';
     env.WSLENV = env.WSLENV ? `${env.WSLENV}:${wmuxWslEnv}` : wmuxWslEnv;
     // A restored WSL/POSIX cwd (issue #60) can't be a Win32 process cwd (error
     // 267). Open it INSIDE the distro via --cd instead; the Win32-side cwd is
@@ -273,6 +287,7 @@ export class PtyManager {
     const shellType = getShellType(shell);
     const integrationDir = getShellIntegrationPath();
     const cliPath = getCliPath();
+    const hookPath = getHookPath();
     // Filter out undefined values from process.env before merging
     const processEnvClean = Object.fromEntries(
       Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)
@@ -285,6 +300,7 @@ export class PtyManager {
       WMUX_PIPE: getPipePath(),
       WMUX_PIPE_TOKEN: readPipeToken(),
       WMUX_CLI: cliPath,
+      WMUX_HOOK: hookPath,
       // Advertise true-color support so Claude Code and other tools render diffs
       // with 24-bit colors instead of 256-color palette indices. Without this,
       // palette colors chosen for diff highlighting can be near-invisible against
