@@ -3,6 +3,7 @@ import { useStore } from '../store';
 import { ShortcutBinding, ShortcutAction } from '../store/settings-slice';
 import { splitNode, removeLeaf, getAllPaneIds, findLeaf, adjustPaneRatio } from '../store/split-utils';
 import { PaneId, SplitNode } from '../../shared/types';
+import { trimTrailingWhitespace } from '../utils/copy-text';
 import { v4 as uuid } from 'uuid';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -110,7 +111,7 @@ export function useKeyboardShortcuts(
     workspaces,
     activeWorkspaceId,
     createWorkspace,
-    closeWorkspace,
+    requestCloseWorkspace,
     selectWorkspace,
     updateSplitTree,
     toggleSidebar,
@@ -194,8 +195,10 @@ export function useKeyboardShortcuts(
     };
 
     const copySelection = () => {
+      // Same line-end trim as the terminal Ctrl+C path (issue #102) — DOM
+      // selections over xterm rows carry the same ConPTY padding spaces.
       const selection = window.getSelection()?.toString();
-      if (selection) navigator.clipboard.writeText(selection);
+      if (selection) navigator.clipboard.writeText(trimTrailingWhitespace(selection));
     };
 
     const pasteIntoFocusedTerminal = () => {
@@ -252,7 +255,9 @@ export function useKeyboardShortcuts(
     const handlers: Partial<Record<ShortcutAction, () => void>> = {
       newWorkspace: () => createWorkspace(),
       newWindow: () => window.wmux?.window?.create?.(),
-      closeWorkspace: () => { if (activeWorkspaceId) closeWorkspace(activeWorkspaceId); },
+      // Routed through the close guard (issue #90): prompts when the opt-in
+      // confirmWorkspaceClose pref is on, closes immediately otherwise.
+      closeWorkspace: () => { if (activeWorkspaceId) requestCloseWorkspace(activeWorkspaceId); },
       closeWindow: () => window.close(),
       openFolder: openFolderAsWorkspace,
       toggleSidebar: () => toggleSidebar(),
@@ -348,7 +353,7 @@ export function useKeyboardShortcuts(
     activeWorkspaceId,
     focusedPaneId,
     createWorkspace,
-    closeWorkspace,
+    requestCloseWorkspace,
     selectWorkspace,
     updateSplitTree,
     toggleSidebar,

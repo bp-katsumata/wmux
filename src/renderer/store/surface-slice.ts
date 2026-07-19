@@ -30,6 +30,19 @@ export interface SurfaceSlice {
   /** Close a surface; if it's the last one in the pane, the pane is removed */
   closeSurface: (workspaceId: WorkspaceId, paneId: PaneId, surfaceId: SurfaceId) => void;
 
+  /**
+   * Open a copy of a surface in the same pane: same type, shell, color and
+   * (current) directory, but a fresh instance. Returns the new SurfaceId, or
+   * null if the source no longer exists.
+   */
+  duplicateSurface: (workspaceId: WorkspaceId, paneId: PaneId, surfaceId: SurfaceId) => SurfaceId | null;
+
+  /** Close every other surface in the pane, keeping only `keepSurfaceId` */
+  closeOtherSurfaces: (workspaceId: WorkspaceId, paneId: PaneId, keepSurfaceId: SurfaceId) => void;
+
+  /** Close every surface positioned after `fromSurfaceId` in the pane */
+  closeSurfacesToRight: (workspaceId: WorkspaceId, paneId: PaneId, fromSurfaceId: SurfaceId) => void;
+
   /** Advance to the next surface in the pane (wraps around) */
   nextSurface: (workspaceId: WorkspaceId, paneId: PaneId) => void;
 
@@ -147,6 +160,28 @@ export const createSurfaceSlice: StateCreator<SliceState, [], [], SurfaceSlice> 
     return surfaceId;
   },
 
+  duplicateSurface(workspaceId, paneId, surfaceId) {
+    const { workspaces } = get();
+    const ws = workspaces.find((w) => w.id === workspaceId);
+    if (!ws) return null;
+
+    const leaf = findLeaf(ws.splitTree, paneId);
+    if (!leaf) return null;
+
+    const src = leaf.surfaces.find((s) => s.id === surfaceId);
+    if (!src) return null;
+
+    // Copy the tab's config, preferring its live directory so the new terminal
+    // opens where the source currently is. Startup commands are intentionally
+    // NOT replayed — duplicating an agent tab shouldn't relaunch the agent.
+    return get().addSurface(workspaceId, paneId, src.type, {
+      shell: src.shell,
+      cwd: src.currentCwd || src.cwd,
+      colorScheme: src.colorScheme,
+      url: src.url,
+    });
+  },
+
   closeSurface(workspaceId, paneId, surfaceId) {
     const { workspaces, updateSplitTree } = get();
     const ws = workspaces.find((w) => w.id === workspaceId);
@@ -185,6 +220,60 @@ export const createSurfaceSlice: StateCreator<SliceState, [], [], SurfaceSlice> 
       activeSurfaceIndex: newActiveIndex,
     });
 
+    updateSplitTree(workspaceId, updatedTree);
+  },
+
+  closeOtherSurfaces(workspaceId, paneId, keepSurfaceId) {
+    const { workspaces, updateSplitTree } = get();
+    const ws = workspaces.find((w) => w.id === workspaceId);
+    if (!ws) return;
+
+    const leaf = findLeaf(ws.splitTree, paneId);
+    if (!leaf) return;
+
+    const keep = leaf.surfaces.find((s) => s.id === keepSurfaceId);
+    if (!keep) return;
+    if (leaf.surfaces.length === 1) return;
+
+    // Reap the shells we're dropping and remember them for Ctrl+Shift+T,
+    // mirroring the bookkeeping in closeSurface (issues #64, #65).
+    for (const s of leaf.surfaces) {
+      if (s.id === keepSurfaceId) continue;
+      pushClosedSurface(s);
+      killSurfacePty(s);
+    }
+
+    const updatedTree = patchLeaf(ws.splitTree, paneId, {
+      surfaces: [keep],
+      activeSurfaceIndex: 0,
+    });
+    updateSplitTree(workspaceId, updatedTree);
+  },
+
+  closeSurfacesToRight(workspaceId, paneId, fromSurfaceId) {
+    const { workspaces, updateSplitTree } = get();
+    const ws = workspaces.find((w) => w.id === workspaceId);
+    if (!ws) return;
+
+    const leaf = findLeaf(ws.splitTree, paneId);
+    if (!leaf) return;
+
+    const idx = leaf.surfaces.findIndex((s) => s.id === fromSurfaceId);
+    if (idx === -1 || idx === leaf.surfaces.length - 1) return;
+
+    // Reap the shells to the right and remember them for Ctrl+Shift+T,
+    // mirroring the bookkeeping in closeSurface (issues #64, #65).
+    for (const s of leaf.surfaces.slice(idx + 1)) {
+      pushClosedSurface(s);
+      killSurfacePty(s);
+    }
+
+    const newSurfaces = leaf.surfaces.slice(0, idx + 1);
+    const newActiveIndex = Math.min(leaf.activeSurfaceIndex, newSurfaces.length - 1);
+    const updatedTree = patchLeaf(ws.splitTree, paneId, {
+      surfaces: newSurfaces,
+      activeSurfaceIndex: newActiveIndex,
+    });
     updateSplitTree(workspaceId, updatedTree);
   },
 

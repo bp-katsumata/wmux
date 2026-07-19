@@ -14,6 +14,7 @@ import { UserColorScheme, ShortcutBinding, ShortcutAction } from '../store/setti
 import { matchesBinding } from './useKeyboardShortcuts';
 import { openInWmuxBrowser } from '../utils/open-in-browser';
 import { attachVisibleRenderer, RendererHandle } from '../utils/terminal-renderer';
+import { trimTrailingWhitespace } from '../utils/copy-text';
 import '@xterm/xterm/css/xterm.css';
 
 declare global {
@@ -386,10 +387,18 @@ export function useTerminal({ surfaceId, shell, cwd, visible = true, focused = t
       fontSize: prefs.fontSize || 13,
       cursorBlink: prefs.cursorBlink ?? true,
       cursorStyle: prefs.cursorStyle || 'block',
+<<<<<<< HEAD
       // Disabled: allowTransparency forces premultiplied alpha in the WebGL
       // context, which prevents LCD (subpixel) antialiasing and degrades font
       // rendering to grayscale-only. We don't use background opacity (#89).
       allowTransparency: false,
+=======
+      // Always on: with an opaque background it renders identically, and the
+      // WebGL context's alpha mode is fixed at creation — so this must not
+      // depend on whether the custom background (issue #89) is currently
+      // enabled, or toggling it would require recreating every terminal.
+      allowTransparency: true,
+>>>>>>> upstream/master
       allowProposedApi: true,
       scrollback: prefs.scrollbackLines || 10000,
     });
@@ -658,7 +667,9 @@ export function useTerminal({ surfaceId, shell, cwd, visible = true, focused = t
     // Attach custom key handler for Ctrl+C and Ctrl+V (image paste)
     terminal.attachCustomKeyEventHandler((event: KeyboardEvent) => {
       if (event.type === 'keydown' && event.ctrlKey && event.key === 'c') {
-        const selection = terminal.getSelection();
+        // ConPTY pads lines to full width with real spaces — trim them or
+        // pasted blocks carry ragged trailing whitespace (issue #102).
+        const selection = trimTrailingWhitespace(terminal.getSelection());
         if (selection) {
           navigator.clipboard.writeText(selection).catch(() => {});
           terminal.clearSelection();
