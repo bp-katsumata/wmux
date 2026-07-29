@@ -6,13 +6,14 @@ import { SplitNode, PaneId, SurfaceId, SurfaceType } from '../../shared/types';
 export function createLeaf(
   paneId?: PaneId,
   surfaceType: SurfaceType = 'terminal',
+  surfaceOpts?: { cwd?: string; shell?: string },
 ): SplitNode & { type: 'leaf' } {
   const resolvedPaneId: PaneId = paneId ?? (`pane-${uuid()}` as PaneId);
   const surfaceId: SurfaceId = `surf-${uuid()}` as SurfaceId;
   return {
     type: 'leaf',
     paneId: resolvedPaneId,
-    surfaces: [{ id: surfaceId, type: surfaceType }],
+    surfaces: [{ id: surfaceId, type: surfaceType, ...surfaceOpts }],
     activeSurfaceIndex: 0,
   };
 }
@@ -25,10 +26,11 @@ export function splitNode(
   newPaneId: PaneId,
   surfaceType: SurfaceType,
   direction: 'horizontal' | 'vertical',
+  surfaceOpts?: { cwd?: string; shell?: string },
 ): SplitNode {
   if (tree.type === 'leaf') {
     if (tree.paneId !== targetPaneId) return tree;
-    const newLeaf = createLeaf(newPaneId, surfaceType);
+    const newLeaf = createLeaf(newPaneId, surfaceType, surfaceOpts);
     return {
       type: 'branch',
       direction,

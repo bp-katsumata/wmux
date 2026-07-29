@@ -135,7 +135,13 @@ export function useKeyboardShortcuts(
       const ws = activeWs();
       if (!ws) return;
       const newPaneId = `pane-${uuid()}` as PaneId;
-      updateSplitTree(activeWorkspaceId, splitNode(ws.splitTree, focusedPaneId, newPaneId, type, dir));
+      const leaf = type === 'terminal' ? findLeaf(ws.splitTree, focusedPaneId) : undefined;
+      const activeSurface = leaf?.surfaces.at(leaf.activeSurfaceIndex ?? 0);
+      const inheritCwd = activeSurface?.currentCwd ?? ws.cwd;
+      const inheritShell = activeSurface?.shell;
+      updateSplitTree(activeWorkspaceId, splitNode(ws.splitTree, focusedPaneId, newPaneId, type, dir,
+        type === 'terminal' ? { cwd: inheritCwd, shell: inheritShell } : undefined,
+      ));
     };
 
     const doFocus = (dir: 'left' | 'right' | 'up' | 'down') => {
