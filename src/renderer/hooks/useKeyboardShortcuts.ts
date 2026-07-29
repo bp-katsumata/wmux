@@ -4,6 +4,7 @@ import { ShortcutBinding, ShortcutAction } from '../store/settings-slice';
 import { splitNode, removeLeaf, getAllPaneIds, findLeaf, adjustPaneRatio } from '../store/split-utils';
 import { PaneId, SplitNode } from '../../shared/types';
 import { trimTrailingWhitespace } from '../utils/copy-text';
+import { GLOBAL_IN_EDITOR, isEditableTarget } from './shortcut-target';
 import { v4 as uuid } from 'uuid';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -20,6 +21,7 @@ export function matchesBinding(e: KeyboardEvent, binding: ShortcutBinding): bool
   const altMatch = !!binding.alt === e.altKey;
   return keyMatch && ctrlMatch && shiftMatch && altMatch;
 }
+
 
 
 // ─── Spatial pane navigation ─────────────────────────────────────────────────
@@ -119,6 +121,7 @@ export function useKeyboardShortcuts(
     nextSurface,
     prevSurface,
     closeSurface,
+    requestCloseSurface,
   } = useStore();
 
   useEffect(() => {
@@ -166,8 +169,9 @@ export function useKeyboardShortcuts(
       const leaf = findLeaf(ws.splitTree, focusedPaneId);
       const activeSurface = leaf?.surfaces[leaf.activeSurfaceIndex];
       if (activeSurface) {
-        // Close the active surface; if it's the last, closeSurface removes the pane.
-        closeSurface(activeWorkspaceId, focusedPaneId, activeSurface.id);
+        // Close the active surface; if it's the last, closeSurface removes the
+        // pane. Via requestCloseSurface so unsaved markdown edits confirm first.
+        requestCloseSurface(activeWorkspaceId, focusedPaneId, activeSurface.id);
         return;
       }
       // Fallback: no surfaces — remove the pane directly (guard: keep last pane).
@@ -318,9 +322,26 @@ export function useKeyboardShortcuts(
       togglePinWorkspace,
       markWorkspaceRead,
       toggleShortcutCheatSheet: () => fire('wmux:toggle-cheatsheet'),
+      // ── issue #116 ───────────────────────────────────────────────────────
+      // View mode lives on the SurfaceRef, so this flips store state directly
+      // rather than going through a CustomEvent. A no-op unless the focused
+      // pane's *active* surface is markdown — toggling a background tab the
+      // user can't see would be invisible and confusing.
+      toggleMarkdownSource: () => {
+        if (!activeWorkspaceId || !focusedPaneId) return;
+        const st = useStore.getState();
+        const ws = st.workspaces.find((w) => w.id === activeWorkspaceId);
+        const leaf = ws && findLeaf(ws.splitTree, focusedPaneId);
+        const surface = leaf?.surfaces[leaf.activeSurfaceIndex];
+        if (!surface || surface.type !== 'markdown') return;
+        st.updateSurface(activeWorkspaceId, focusedPaneId, surface.id, {
+          markdownViewMode: surface.markdownViewMode === 'source' ? 'preview' : 'source',
+        });
+      },
     };
 
     function handleKeyDown(e: KeyboardEvent): void {
+      const inEditor = isEditableTarget(e.target as HTMLElement | null);
       const shortcutEntries = Object.entries(shortcuts) as [ShortcutAction, ShortcutBinding][];
 
       for (const [action, binding] of shortcutEntries) {
@@ -329,6 +350,10 @@ export function useKeyboardShortcuts(
         // copy/paste are handled by xterm's attachCustomKeyEventHandler (special
         // terminal logic: copy only when selection exists; paste via Electron API).
         if (action === 'copy' || action === 'paste') return;
+
+        // Typing in a text field wins over all but a few global actions, and we
+        // must return *without* preventDefault so the field still gets the key.
+        if (inEditor && !GLOBAL_IN_EDITOR.has(action)) return;
 
         // find and copyMode are handled at PaneWrapper level — don't block them
         if (action === 'find' || action === 'copyMode') return;

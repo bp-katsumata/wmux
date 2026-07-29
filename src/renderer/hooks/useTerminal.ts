@@ -15,6 +15,7 @@ import { matchesBinding } from './useKeyboardShortcuts';
 import { openInWmuxBrowser } from '../utils/open-in-browser';
 import { attachVisibleRenderer, RendererHandle } from '../utils/terminal-renderer';
 import { trimTrailingWhitespace } from '../utils/copy-text';
+import { handleShiftEnter, isShiftEnter } from './terminal-keys';
 import '@xterm/xterm/css/xterm.css';
 
 declare global {
@@ -387,18 +388,10 @@ export function useTerminal({ surfaceId, shell, cwd, visible = true, focused = t
       fontSize: prefs.fontSize || 13,
       cursorBlink: prefs.cursorBlink ?? true,
       cursorStyle: prefs.cursorStyle || 'block',
-<<<<<<< HEAD
       // Disabled: allowTransparency forces premultiplied alpha in the WebGL
       // context, which prevents LCD (subpixel) antialiasing and degrades font
       // rendering to grayscale-only. We don't use background opacity (#89).
       allowTransparency: false,
-=======
-      // Always on: with an opaque background it renders identically, and the
-      // WebGL context's alpha mode is fixed at creation — so this must not
-      // depend on whether the custom background (issue #89) is currently
-      // enabled, or toggling it would require recreating every terminal.
-      allowTransparency: true,
->>>>>>> upstream/master
       allowProposedApi: true,
       scrollback: prefs.scrollbackLines || 10000,
     });
@@ -714,6 +707,14 @@ export function useTerminal({ surfaceId, shell, cwd, visible = true, focused = t
           if (action === 'copy' || action === 'paste') continue;
           if (matchesBinding(event, binding)) return false;
         }
+      }
+      // Shift+Enter → newline for TUI apps (Claude Code, etc). See
+      // ./terminal-keys for why this cancels the event as well as returning
+      // false (issue #119). Routed through terminal.input() (→ onData) rather
+      // than pty.write so broadcast-input mode (issue #64) fans the newline out
+      // like any other key.
+      if (isShiftEnter(event)) {
+        return handleShiftEnter(event, (data) => terminal.input(data, true));
       }
       return true;
     });
