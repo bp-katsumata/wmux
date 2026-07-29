@@ -387,18 +387,10 @@ export function useTerminal({ surfaceId, shell, cwd, visible = true, focused = t
       fontSize: prefs.fontSize || 13,
       cursorBlink: prefs.cursorBlink ?? true,
       cursorStyle: prefs.cursorStyle || 'block',
-<<<<<<< HEAD
       // Disabled: allowTransparency forces premultiplied alpha in the WebGL
       // context, which prevents LCD (subpixel) antialiasing and degrades font
       // rendering to grayscale-only. We don't use background opacity (#89).
       allowTransparency: false,
-=======
-      // Always on: with an opaque background it renders identically, and the
-      // WebGL context's alpha mode is fixed at creation — so this must not
-      // depend on whether the custom background (issue #89) is currently
-      // enabled, or toggling it would require recreating every terminal.
-      allowTransparency: true,
->>>>>>> upstream/master
       allowProposedApi: true,
       scrollback: prefs.scrollbackLines || 10000,
     });
