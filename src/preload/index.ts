@@ -124,6 +124,12 @@ contextBridge.exposeInMainWorld('wmux', {
       }
     },
   },
+  // What wmux may write into ~/.claude and ~/.config/opencode (issue #132).
+  // Separate from `settings` because setting it has side effects on disk.
+  integration: {
+    get: (): Promise<unknown> => ipcRenderer.invoke('integration:get'),
+    set: (partial: unknown): Promise<unknown> => ipcRenderer.invoke('integration:set', partial),
+  },
   settings: {
     // Synchronous read so the renderer store can hydrate at module-load time.
     getAllSync: (): Record<string, unknown> => {
@@ -142,6 +148,16 @@ contextBridge.exposeInMainWorld('wmux', {
         return Array.isArray(langs) ? langs : [];
       } catch {
         return [];
+      }
+    },
+    // Community translations from ~/.wmux/locales (issue #147). Synchronous:
+    // the i18n registry is built at module load, before the store reads the
+    // persisted language and validates it against the shipped language set.
+    getUserLocalesSync: (): unknown => {
+      try {
+        return ipcRenderer.sendSync('locales:get-all-sync') ?? { locales: [], errors: [] };
+      } catch {
+        return { locales: [], errors: [] };
       }
     },
   },
@@ -178,6 +194,19 @@ contextBridge.exposeInMainWorld('wmux', {
       ipcRenderer.on(IPC_CHANNELS.CLAUDE_ACTIVITY, handler);
       return () => ipcRenderer.removeListener(IPC_CHANNELS.CLAUDE_ACTIVITY, handler);
     },
+  },
+  // Declared agent run state — blocked / working / idle (issue #128).
+  agentState: {
+    onUpdate: (callback: (data: any) => void) => {
+      const handler = (_event: any, data: any) => callback(data);
+      ipcRenderer.on(IPC_CHANNELS.AGENT_STATE, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.AGENT_STATE, handler);
+    },
+    // The back-channel: answer a blocked pane without switching to it. Returns
+    // { ok } — a refusal (the pane stopped asking, the choice is gone) is a
+    // normal outcome the UI reports, not an exception.
+    answer: (surfaceId: string, choiceId: string): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke(IPC_CHANNELS.AGENT_ANSWER, surfaceId, choiceId),
   },
   orchestration: {
     onUpdate: (callback: (state: any) => void) => {
