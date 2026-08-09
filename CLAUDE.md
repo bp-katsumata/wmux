@@ -527,3 +527,19 @@ Use these exact terms in code, comments, and UI strings:
 | **Surface** | A single terminal/browser/markdown/diff instance shown as a tab inside a pane | Console window, terminal window, panel |
 | **Pane** | A rectangular region in the split tree containing one or more surfaces | Console window, tab |
 | **Live Layout Preview** | Temporary workspace preview shown while dragging a surface tab | Drop zone highlight, ghost split preview |
+
+---
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues for `bp-katsumata/wmux`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Five canonical labels: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context layout — `CONTEXT.md` at the repo root plus `docs/adr/`. See `docs/agents/domain.md`.
