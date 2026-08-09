@@ -6,6 +6,7 @@ import { PaneId, SplitNode } from '../../shared/types';
 import { trimTrailingWhitespace } from '../utils/copy-text';
 import { GLOBAL_IN_EDITOR, isEditableTarget } from './shortcut-target';
 import { v4 as uuid } from 'uuid';
+import { useT } from '../i18n';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -123,6 +124,7 @@ export function useKeyboardShortcuts(
     closeSurface,
     requestCloseSurface,
   } = useStore();
+  const t = useT();
 
   useEffect(() => {
     // ── Shared action helpers (kept small so each stays well under Sonar's
@@ -135,7 +137,13 @@ export function useKeyboardShortcuts(
       const ws = activeWs();
       if (!ws) return;
       const newPaneId = `pane-${uuid()}` as PaneId;
-      updateSplitTree(activeWorkspaceId, splitNode(ws.splitTree, focusedPaneId, newPaneId, type, dir));
+      const leaf = type === 'terminal' ? findLeaf(ws.splitTree, focusedPaneId) : undefined;
+      const activeSurface = leaf?.surfaces.at(leaf.activeSurfaceIndex ?? 0);
+      const inheritCwd = activeSurface?.currentCwd ?? ws.cwd;
+      const inheritShell = activeSurface?.shell;
+      updateSplitTree(activeWorkspaceId, splitNode(ws.splitTree, focusedPaneId, newPaneId, type, dir,
+        type === 'terminal' ? { cwd: inheritCwd, shell: inheritShell } : undefined,
+      ));
     };
 
     const doFocus = (dir: 'left' | 'right' | 'up' | 'down') => {
@@ -257,7 +265,7 @@ export function useKeyboardShortcuts(
     //    new actions just add an entry. `find`/`copyMode` are handled at the
     //    PaneWrapper level and short-circuited before this lookup. ─────────────
     const handlers: Partial<Record<ShortcutAction, () => void>> = {
-      newWorkspace: () => createWorkspace(),
+      newWorkspace: () => createWorkspace(undefined, t),
       newWindow: () => window.wmux?.window?.create?.(),
       // Routed through the close guard (issue #90): prompts when the opt-in
       // confirmWorkspaceClose pref is on, closes immediately otherwise.
@@ -391,6 +399,7 @@ export function useKeyboardShortcuts(
     onToggleNotifications,
     onFocusPane,
     onToggleZoom,
+    t,
   ]);
 
   // Ctrl+1 through Ctrl+9 — select workspace by index

@@ -3,8 +3,11 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { IPC_CHANNELS, SurfaceId, WindowId, WorkspaceId, AgentId } from '../shared/types';
-import { observePtyData } from './claude-observer';
+import { observePtyData, clearActivity } from './claude-observer';
+import { clearAgentState } from './agent-state';
 import { PtyManager } from './pty-manager';
+import { PtyLedger, reapOrphans } from './pty-ledger';
+import { getAppDataDir } from '../shared/instance';
 import { NotificationManager } from './notification-manager';
 import { detectShells } from './shell-detector';
 import { listSystemFonts } from './font-detector';
@@ -12,13 +15,16 @@ import { isContextMenuInstalled, installContextMenu, uninstallContextMenu } from
 import { getDefaultTheme, getThemeByName, loadBundledThemes } from './theme-loader';
 import { parseWindowsTerminalConfig, parseGhosttyConfig, loadProjectProfiles, importWindowsTerminalProfiles } from './config-loader';
 import { loadUserConfig, getConfigPath, writeShortcutsToConfig, startConfigFileWatcher } from './user-config';
+import { loadUserLocales } from './user-locales';
 import { WindowManager } from './window-manager';
 import { CDPBridge } from './cdp-bridge';
 import { CDPProxy } from './cdp-proxy';
 import { AgentManager } from './agent-manager';
 import { saveNamedSession, loadNamedSession, listNamedSessions, deleteNamedSession, loadSession } from './session-persistence';
-import { sessionWindows, toRestorePayload } from './session-windows';
+import { sessionWindows, toRestorePayload, restoreAnswerFor } from './session-windows';
 import { loadSettings, saveSetting } from './settings-store';
+import { readConsent, updateConsent } from './agent-integration';
+import { handleAgentStateV2 } from './agent-state-rpc';
 import { getChangedFiles, getFileDiff } from './diff-provider';
 import {
   readMarkdownFile,
@@ -29,10 +35,27 @@ import {
 } from './markdown-file';
 import { grantMarkdownPath, isMarkdownPathGranted } from './markdown-grants';
 
-const ptyManager = new PtyManager();
+// Claimed at module load, before anything can spawn a PTY, so the candidate
+// list is strictly what a PREVIOUS instance left behind (issue #139). The
+// killing half is async and driven from index.ts once the app is up.
+const ptyLedger = new PtyLedger(path.join(getAppDataDir(), 'pty-ledger.json'));
+const orphanCandidates = ptyLedger.takeOver();
+
+const ptyManager = new PtyManager(ptyLedger);
 const notificationManager = new NotificationManager();
 const cdpBridge = new CDPBridge();
 const agentManager = new AgentManager(ptyManager);
+
+/**
+ * Tree-kill the PTY subtrees a previously crashed wmux left running (issue
+ * #139). Best-effort and unawaited by design — see reapOrphans().
+ */
+export function reapOrphanedPtys(): void {
+  reapOrphans(orphanCandidates).then(
+    () => { /* reaped, or nothing to reap */ },
+    (err) => { console.warn('[wmux] orphan reap failed:', err?.message); },
+  );
+}
 
 export function registerIpcHandlers(windowManager: WindowManager, cdpProxyInstance?: CDPProxy): void {
   // Toggle DevTools for the renderer window
@@ -73,6 +96,12 @@ export function registerIpcHandlers(windowManager: WindowManager, cdpProxyInstan
         if (window && !window.isDestroyed()) {
           window.webContents.send(IPC_CHANNELS.PTY_EXIT, id, code);
         }
+        // The process that owned this surface is gone, so any state it declared
+        // is now a lie. Drop it rather than leave a `working`/`blocked` pane
+        // pointing at a dead PID (issue #128); the observer's scraped activity
+        // goes with it, since it describes the same dead process.
+        clearAgentState(id);
+        clearActivity(id);
         // Clean up listeners when PTY exits
         unsubData();
         unsubExit();
@@ -163,7 +192,9 @@ export function registerIpcHandlers(windowManager: WindowManager, cdpProxyInstan
   });
 
   ipcMain.handle(IPC_CHANNELS.CONFIG_RELOAD_USER_CONFIG, async () => {
-    const cfg = loadUserConfig();
+    // A reload covers everything under ~/.wmux, so edited community
+    // translations (issue #147) apply without a restart too.
+    const cfg = { ...loadUserConfig(), locales: loadUserLocales() };
     // Broadcast to every open window so all surfaces live-apply the new prefs.
     for (const win of BrowserWindow.getAllWindows()) {
       if (!win.isDestroyed()) {
@@ -307,7 +338,11 @@ export function registerIpcHandlers(windowManager: WindowManager, cdpProxyInstan
   // could never restore more than one window's worth of state.
   ipcMain.handle(IPC_CHANNELS.SESSION_LOAD_AUTO, (event) => {
     const windowId = windowManager.idForWebContents(event.sender);
-    if (windowId) return toRestorePayload(sessionWindows.get(windowId));
+    if (windowId) {
+      return restoreAnswerFor(sessionWindows.get(windowId), {
+        startup: sessionWindows.isStartup(windowId),
+      });
+    }
     // Unattributable sender: fall back to the file's first window rather than
     // leaving a legitimately-restored window empty.
     return toRestorePayload(loadSession()?.windows?.[0] ?? null);
@@ -321,6 +356,45 @@ export function registerIpcHandlers(windowManager: WindowManager, cdpProxyInstan
   ipcMain.on('settings:set', (_event, key: string, value: unknown) => {
     saveSetting(key, value);
   });
+
+  // Community translations (~/.wmux/locales/*.json, issue #147). Synchronous
+  // for the same reason as settings:get-all-sync, plus one of its own: the
+  // persisted-language guard rejects any code the registry doesn't know, so a
+  // user-defined language has to be merged in *before* the store initializes or
+  // it would reset to English on every restart.
+  ipcMain.on('locales:get-all-sync', (event) => {
+    try {
+      event.returnValue = loadUserLocales();
+    } catch {
+      event.returnValue = { locales: [], errors: [], dir: '' };
+    }
+  });
+
+  // The #128 back-channel from the sidebar: answer a blocked pane in place.
+  // Routed through the same V2 handler the CLI and pipe clients use, so there
+  // is exactly one implementation of "what does answering mean" — including the
+  // refusals (pane no longer asking, choice already consumed).
+  ipcMain.handle(IPC_CHANNELS.AGENT_ANSWER, (_event, surfaceId: string, choiceId: string) =>
+    new Promise((resolve) => {
+      const handled = handleAgentStateV2(
+        'pane.answer_agent',
+        { surfaceId, choiceId },
+        (result: any) => resolve({ ok: true, ...result }),
+        (_code: number, message: string) => resolve({ ok: false, error: message }),
+      );
+      if (!handled) resolve({ ok: false, error: 'answer_agent not routed' });
+    }),
+  );
+
+  // Agent-integration consent (issue #132). Deliberately NOT routed through the
+  // generic settings:set above: changing this decision has to reconcile the files
+  // in the user's home right away — switching a feature off has to remove what it
+  // wrote, or the toggle would only stop future writes and leave the current ones
+  // in place, which is the original complaint one level down.
+  ipcMain.handle('integration:get', () => readConsent());
+  ipcMain.handle('integration:set', (_event, partial: Parameters<typeof updateConsent>[0]) =>
+    updateConsent(partial ?? {}),
+  );
 
   // OS display-language list for first-launch UI language detection (issue #114).
   // navigator.language follows Chromium's locale resolution, which on Windows can
@@ -393,15 +467,15 @@ export function registerIpcHandlers(windowManager: WindowManager, cdpProxyInstan
   // a renderer-supplied path is an arbitrary-program launcher, which is a much
   // bigger capability than "open the doc I'm reading in Typora".
   ipcMain.handle(IPC_CHANNELS.MARKDOWN_REVEAL, async (_event, filePath: string) => {
-    if (!isAllowedMarkdownPath(filePath)) return { error: 'Unsupported file type' };
+    if (!isAllowedMarkdownPath(filePath)) return { error: 'Unsupported file type', code: 'unsupported_type' };
     shell.showItemInFolder(filePath);
     return { ok: true };
   });
 
   ipcMain.handle(IPC_CHANNELS.MARKDOWN_OPEN_IN_APP, async (_event, filePath: string) => {
-    if (!isAllowedMarkdownPath(filePath)) return { error: 'Unsupported file type' };
+    if (!isAllowedMarkdownPath(filePath)) return { error: 'Unsupported file type', code: 'unsupported_type' };
     const err = await shell.openPath(filePath);
-    return err ? { error: err } : { ok: true };
+    return err ? { error: err, code: 'action_failed' } : { ok: true };
   });
 
   // Markdown editing (issue #116, F3). Re-stat only — backs the on-focus
@@ -417,7 +491,7 @@ export function registerIpcHandlers(windowManager: WindowManager, cdpProxyInstan
     IPC_CHANNELS.MARKDOWN_SAVE_FILE,
     async (event, filePath: string, content: string, expectedMtimeMs?: number) => {
       if (!isMarkdownPathGranted(event.sender.id, filePath)) {
-        return { error: 'This file was not opened in wmux — use Save As' };
+        return { error: 'This file was not opened in wmux — use Save As', code: 'not_granted' };
       }
       return writeMarkdownFile(filePath, content, expectedMtimeMs);
     },

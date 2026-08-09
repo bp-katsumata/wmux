@@ -6,13 +6,14 @@ import { SplitNode, PaneId, SurfaceId, SurfaceType } from '../../shared/types';
 export function createLeaf(
   paneId?: PaneId,
   surfaceType: SurfaceType = 'terminal',
+  surfaceOpts?: { cwd?: string; shell?: string },
 ): SplitNode & { type: 'leaf' } {
   const resolvedPaneId: PaneId = paneId ?? (`pane-${uuid()}` as PaneId);
   const surfaceId: SurfaceId = `surf-${uuid()}` as SurfaceId;
   return {
     type: 'leaf',
     paneId: resolvedPaneId,
-    surfaces: [{ id: surfaceId, type: surfaceType }],
+    surfaces: [{ id: surfaceId, type: surfaceType, ...surfaceOpts }],
     activeSurfaceIndex: 0,
   };
 }
@@ -25,10 +26,11 @@ export function splitNode(
   newPaneId: PaneId,
   surfaceType: SurfaceType,
   direction: 'horizontal' | 'vertical',
+  surfaceOpts?: { cwd?: string; shell?: string },
 ): SplitNode {
   if (tree.type === 'leaf') {
     if (tree.paneId !== targetPaneId) return tree;
-    const newLeaf = createLeaf(newPaneId, surfaceType);
+    const newLeaf = createLeaf(newPaneId, surfaceType, surfaceOpts);
     return {
       type: 'branch',
       direction,
@@ -175,6 +177,39 @@ export function collectActiveTerminalSurfaceIds(tree: SplitNode): SurfaceId[] {
     ...collectActiveTerminalSurfaceIds(tree.children[0]),
     ...collectActiveTerminalSurfaceIds(tree.children[1]),
   ];
+}
+
+// ─── freezeSurfaceCwds (issue #134: save/restore per-terminal directory) ─────
+// Rewrite every surface's spawn `cwd` to the directory it is *actually* sitting
+// in, for the copy of the tree that goes into a saved session.
+//
+// A terminal carries two directories: `cwd`, where it was told to start, and
+// `currentCwd`, where shell integration last reported it to be. Only the first
+// was persisted, and for a tab opened the ordinary way it is undefined — so on
+// restore every terminal in a workspace fell back to the single, workspace-level
+// `cwd`, which is itself whichever pane reported a prompt most recently. Two
+// terminals on D:\ therefore came back on C:\ (the shell's own default when the
+// fallback was empty too), which is exactly what #134 hit: with git worktrees on
+// separate drives, restoring a session lost the one thing that identified it.
+//
+// Freezing happens at save time rather than on every prompt because `cwd` is a
+// *spawn* argument. Live-updating it would be rewriting the terminal's history
+// while it runs, and PaneWrapper passes it as a prop — the store's copy stays
+// untouched, so nothing about the running session changes.
+//
+// `currentCwd` is carried through as well, so a restored tab can label itself
+// with the right folder before its shell has reported a first prompt.
+export function freezeSurfaceCwds(tree: SplitNode): SplitNode {
+  if (tree.type === 'leaf') {
+    return {
+      ...tree,
+      surfaces: tree.surfaces.map((s) => (s.currentCwd ? { ...s, cwd: s.currentCwd } : s)),
+    };
+  }
+  return {
+    ...tree,
+    children: [freezeSurfaceCwds(tree.children[0]), freezeSurfaceCwds(tree.children[1])],
+  };
 }
 
 // ─── replaceSoleTerminalSurface (agent spawn --replace-tab) ──────────────────
